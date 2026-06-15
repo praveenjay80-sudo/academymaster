@@ -12,7 +12,8 @@ const TABS = [
 function clearTopicCache(slug: string, label: string) {
   [
     `sc2:practice:${slug}`,
-    `canon-v1:${slug}`,
+    `canon-v2:${slug}`,
+    `knowledge-space-v1:${slug}`,
     `tutor-session:${slug}`,
   ].forEach(k => localStorage.removeItem(k));
 }

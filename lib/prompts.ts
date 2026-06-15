@@ -46,39 +46,29 @@ Topic: ${topic}`;
 }
 
 export function canonPrompt(topic: string) {
-  return `Generate the complete Canon for "${topic}" — a fully cross-referenced knowledge base covering every dimension of the field. Output typed NDJSON objects in this exact order: figures first, then concepts, then works, then events, then stages. Every ID must be a consistent kebab-case slug used identically across all cross-references.
+  return `Generate the complete Knowledge Space for "${topic}" — 20 to 30 concept objects covering the field from foundational prerequisites to the active research frontier.
 
-FIGURES (5-8 key people who built this field):
-{"_type":"figure","id":"kolmogorov","name":"Andrei Kolmogorov","years":"1903–1987","contribution":"2-3 sentences: their specific contribution in plain English, what problem they solved, why it still matters today.","concept_ids":["probability-axioms","measure-spaces","conditional-expectation"],"work_ids":["grundbegriffe"],"influenced_by":["hilbert","borel"],"influenced":["doob","dynkin"],"surprising_fact":"One non-obvious fact about them that a student would find remarkable."}
+Output ONLY concept objects in NDJSON format (one complete JSON object per line). No other object types. No array brackets. No commas between objects. Nothing but NDJSON.
 
-CONCEPTS (20-30 core ideas, ordered foundational → advanced):
-{"_type":"concept","id":"probability-axioms","name":"Kolmogorov Axioms","description":"3-4 sentences: what it is in plain English, why it matters, what would be impossible without it.","difficulty":"FOUNDATIONAL","category":"Foundations","prerequisites":[],"unlocks":["conditional-probability","random-variables"],"figure_ids":["kolmogorov"],"work_ids":["grundbegriffe","billingsley"],"analogy":"One concrete everyday analogy that makes the concept immediately tangible."}
+OUTPUT ORDER: strictly foundational-first. A concept must appear AFTER all of its prerequisites in the stream. Begin with the concepts that have empty prerequisites arrays, then work outward.
 
-WORKS (8-15 essential works, ordered beginner → advanced):
-{"_type":"work","id":"billingsley","title":"Probability and Measure","authors":["Patrick Billingsley"],"year":1979,"category":"PEDAGOGICAL","difficulty":"ADVANCED","reading_time":"4-6 months","concept_ids":["measure-spaces","probability-axioms","convergence-theorems"],"why_essential":"1-2 sharp sentences on why this specific work is indispensable.","what_you_gain":"What you can do/understand after reading this.","prereqs":"What to know before starting."}
+Each concept object must have this exact shape:
+{"_type":"concept","id":"kebab-case-id","name":"Concept Name","level":"FOUNDATIONAL","category":"Brief Category Label","description":"Five sentences: (1) define it in plain English as if to a smart non-expert, (2) what problem it solves or what would be impossible without it, (3) how it connects to prerequisites, (4) a surprising or non-obvious aspect, (5) why researchers still care about it today.","analogy":"One concrete everyday analogy that makes the concept immediately tangible — one or two sentences.","prerequisites":["id-of-required-concept"],"unlocks":["id-of-concept-this-enables"],"figures":[{"name":"Full Name","years":"1875–1941","contribution":"Two to three sentences: their specific contribution in plain English, what problem they solved, why it still matters.","surprising_fact":"One non-obvious fact a student would find remarkable."}],"works":[{"title":"Full Title","authors":["Author Name"],"year":1966,"category":"PEDAGOGICAL","why_essential":"One to two sharp sentences on why this specific work is indispensable for THIS concept.","what_you_gain":"What you can do or understand after engaging with this work.","reading_time":"Concrete estimate e.g. 3-4 months"}],"historical_moment":{"year":1902,"title":"Short title of the historical event","description":"Two to three sentences: what happened, who did it, why it was a turning point.","significance":"One sentence on the lasting impact."},"milestone":"What you can do after mastering this concept — one sentence, active voice."}
 
-EVENTS (15-25 chronological milestones, ordered by year):
-{"_type":"event","id":"kolmogorov-axioms-1933","year":1933,"era":"Classical Period","title":"Kolmogorov Axiomatizes Probability","description":"2-3 sentences: what happened, who did it, why it was a turning point.","significance":"One sentence on the lasting impact.","event_type":"PARADIGM_SHIFT","figure_id":"kolmogorov","concept_id":"probability-axioms","work_id":"grundbegriffe"}
+LEVEL values (use exactly one per concept):
+- FOUNDATIONAL — universal prerequisites, every student starts here
+- INTERMEDIATE — builds theoretical sophistication on foundations
+- ADVANCED — deep mastery of the main apparatus
+- SPECIALIZATION — where the field splits into named specialist paths
+- RESEARCH — active frontier, what researchers are working on now
 
-STAGES (12-20 reading path stages — the learning path from zero to mastery):
-{"_type":"stage","stage_id":"1","level":"FOUNDATIONS","layout":"sequential","parallel_group":null,"track":null,"track_position":null,"title":"Basic Probability","concept_ids":["sample-space","probability-axioms","events"],"work_id":"blitzstein","work_title":"Introduction to Probability","work_authors":["Joseph Blitzstein","Jessica Hwang"],"work_category":"PEDAGOGICAL","duration":"3-4 weeks","milestone":"Can calculate probabilities for discrete sample spaces and apply Bayes' theorem.","prerequisites":["No prerequisites — this is the starting point"]}
-
-Parallel stage example (shares parallel_group, has track + track_position):
-{"_type":"stage","stage_id":"spec-a-1","level":"SPECIALIZATION","layout":"parallel","parallel_group":"spec","track":"Stochastic Processes","track_position":1,"title":"Markov Chains","concept_ids":["markov-chains","transition-matrices"],"work_id":"norris","work_title":"Markov Chains","work_authors":["James Norris"],"work_category":"PEDAGOGICAL","duration":"2-3 months","milestone":"Can analyze discrete-time Markov chains and compute stationary distributions.","prerequisites":["All FOUNDATIONS stages","Completion of INTERMEDIATE stages"]}
-
-event_type must be exactly one of: DISCOVERY | PUBLICATION | PARADIGM_SHIFT | APPLICATION | CONTROVERSY
-work category must be exactly one of: PEDAGOGICAL | SEMINAL | BREAKTHROUGH
-concept difficulty must be exactly one of: FOUNDATIONAL | INTERMEDIATE | ADVANCED
-stage level must be exactly one of: FOUNDATIONS | INTERMEDIATE | ADVANCED | SPECIALIZATION | RESEARCH
-
-Rules:
-- IDs must be consistent — use exactly the same kebab slug everywhere
-- Every concept must have at least one figure_id and one work_id
-- Every figure must have at least two concept_ids
-- Every event must have at least one of: figure_id, concept_id, work_id (using EXACT IDs generated above)
-- Every stage must have 2-5 concept_ids matching EXACT concept IDs generated above
-- Parallel stages share parallel_group; stages in same track share track name; track_position is 1-based
-- No markdown, no array wrappers, no commas between objects, nothing but NDJSON
+RULES:
+- prerequisites and unlocks contain kebab-case IDs only — IDs that appear as "id" fields elsewhere in THIS output
+- A concept may have an empty prerequisites array [] if it is a true starting point
+- figures array: 1–3 entries; works array: 1–3 entries
+- historical_moment may be null only for very modern computational concepts with no clear founding moment — use null (not omit the key)
+- Every ID used in prerequisites or unlocks must correspond to a concept that IS output in this response
+- No markdown, no explanation text, no array wrappers, only NDJSON
 
 Topic: ${topic}`;
 }
