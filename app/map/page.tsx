@@ -169,6 +169,7 @@ export default function MapPage() {
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<"graph" | "timeline">("graph");
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     const found: TopicInfo[] = [];
@@ -231,9 +232,22 @@ export default function MapPage() {
     router.push(`/topic/${slug}?label=${encodeURIComponent(label)}`);
   }
 
-  const selectedTopic = topics.find(t => t.slug === selectedSlug) ?? null;
+  const filteredTopics = search.trim()
+    ? topics.filter(t => {
+        const q = search.toLowerCase();
+        return (
+          t.label.toLowerCase().includes(q) ||
+          t.concepts.some(c => c.name.toLowerCase().includes(q))
+        );
+      })
+    : topics;
 
-  const topicNodes: TopicNodeData[] = topics.map(t => ({
+  const filteredSlugs = new Set(filteredTopics.map(t => t.slug));
+  const filteredEdges = edges.filter(e => filteredSlugs.has(e.source) && filteredSlugs.has(e.target));
+
+  const selectedTopic = filteredTopics.find(t => t.slug === selectedSlug) ?? null;
+
+  const topicNodes: TopicNodeData[] = filteredTopics.map(t => ({
     slug: t.slug,
     label: t.label,
     foundational: t.concepts.filter(c => c.difficulty === "FOUNDATIONAL").length,
@@ -257,14 +271,36 @@ export default function MapPage() {
       {/* Header */}
       <header style={{ padding: "20px 32px", borderBottom: "1px solid var(--border)", background: "var(--bg-secondary)", display: "flex", alignItems: "center", gap: 16 }}>
         <a href="/" style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif", fontSize: 13, textDecoration: "none" }}>← Home</a>
-        <div style={{ flex: 1 }}>
+        <div>
           <h1 style={{ fontFamily: "Georgia, serif", color: "var(--accent)", fontSize: 22, margin: 0 }}>
             ◈ Learning Map
           </h1>
           <p style={{ color: "var(--text-muted)", fontSize: 12, margin: "2px 0 0" }}>
-            {topics.length} topic{topics.length !== 1 ? "s" : ""} studied · edges = shared concepts
+            {filteredTopics.length}{search ? ` of ${topics.length}` : ""} topic{topics.length !== 1 ? "s" : ""} studied · edges = shared concepts
           </p>
         </div>
+
+        {/* Search */}
+        <input
+          type="text"
+          value={search}
+          onChange={e => { setSearch(e.target.value); setSelectedSlug(null); }}
+          placeholder="Search topics or concepts…"
+          style={{
+            flex: 1,
+            maxWidth: 280,
+            background: "var(--bg-card)",
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            padding: "7px 14px",
+            color: "var(--text-primary)",
+            fontFamily: "Georgia, serif",
+            fontSize: 13,
+            outline: "none",
+          }}
+          onFocus={e => (e.target.style.borderColor = "var(--accent)")}
+          onBlur={e => (e.target.style.borderColor = "var(--border)")}
+        />
 
         {/* View toggle */}
         <div style={{ display: "flex", gap: 4, background: "var(--bg-card)", borderRadius: 8, padding: 3, border: "1px solid var(--border)" }}>
@@ -307,7 +343,7 @@ export default function MapPage() {
       {topics.length > 0 && view === "graph" && (
         <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
           <div style={{ flex: 1, position: "relative" }}>
-            <MapGraph topics={topicNodes} edges={edges} onSelect={handleSelect} />
+            <MapGraph topics={topicNodes} edges={filteredEdges} onSelect={handleSelect} />
           </div>
 
           {selectedTopic && (
@@ -326,7 +362,7 @@ export default function MapPage() {
           {/* Timeline column */}
           <div style={{ flex: 1, maxWidth: 640 }}>
             <div style={{ borderLeft: "2px solid var(--border)", paddingLeft: 24, display: "flex", flexDirection: "column", gap: 24 }}>
-              {topics.map((t, i) => {
+              {filteredTopics.map((t, i) => {
                 const foundational = t.concepts.filter(c => c.difficulty === "FOUNDATIONAL").length;
                 const intermediate = t.concepts.filter(c => c.difficulty === "INTERMEDIATE").length;
                 const advanced = t.concepts.filter(c => c.difficulty === "ADVANCED").length;
