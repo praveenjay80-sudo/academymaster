@@ -1,10 +1,13 @@
-export type Taxonomy = {
-  [domain: string]: {
-    [field: string]: string[];
-  };
+export const TAXONOMY: Record<string, string[]> = {
+  "Formal Sciences":  ["Mathematics", "Computer Science", "Statistics & Probability", "Logic"],
+  "Natural Sciences": ["Physics", "Chemistry", "Biology", "Earth Sciences", "Astronomy & Cosmology"],
+  "Social Sciences":  ["Economics", "Psychology", "Sociology", "Political Science", "Anthropology"],
+  "Humanities":       ["Philosophy", "History", "Literature", "Linguistics", "Philosophy of Science"],
+  "Applied Sciences": ["Engineering", "Medicine & Health", "Finance", "Environmental Science"],
 };
 
-export const TAXONOMY: Taxonomy = {
+// ---- legacy full taxonomy kept below for reference (unused) ----
+const _LEGACY: Record<string, Record<string, string[]>> = {
   "Formal Sciences": {
     "Mathematics": [
       "Symmetry & Structure",
@@ -292,3 +295,4 @@ export const TAXONOMY: Taxonomy = {
     ],
   },
 };
+void _LEGACY;

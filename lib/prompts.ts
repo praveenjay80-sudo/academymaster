@@ -1,3 +1,24 @@
+export function themesPrompt(domain: string, field: string) {
+  return `Generate 10-12 major themes for the field of "${field}" (within the domain of "${domain}").
+
+A theme is a central idea, tension, or underlying question that defines the intellectual character of the field — NOT a sub-discipline or named subtopic.
+
+Good examples from Mathematics: "The Nature of Infinity", "Proof & Mathematical Rigor", "The Unreasonable Effectiveness of Mathematics"
+Bad examples (these are sub-disciplines, not themes): "Algebra", "Calculus", "Topology"
+
+For each theme, output ONE JSON object on its own line:
+{"id":"kebab-case-slug","name":"Theme Name (3-7 words)","description":"2-3 plain-English sentences. What is the central question or tension? Why does it matter? No jargon without explanation."}
+
+Rules:
+- NDJSON format: one complete JSON object per line, no array brackets, no commas between objects
+- Themes must be diverse and cover the full intellectual range of ${field}
+- Descriptions are for a curious non-expert — simple, vivid, concrete
+- Names should feel like big ideas, not course catalogue entries
+
+Domain: ${domain}
+Field: ${field}`;
+}
+
 export function conceptsListPrompt(topic: string) {
   return `Generate a complete list of ALL core concepts someone must master to truly understand "${topic}".
 
