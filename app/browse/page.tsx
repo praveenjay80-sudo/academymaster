@@ -177,7 +177,7 @@ function ThemePanel({ domain, field }: { domain: string; field: string }) {
 
   function goToTopic(theme: Theme) {
     const slug = theme.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-    router.push(`/topic/${slug}?label=${encodeURIComponent(theme.name)}`);
+    router.push(`/topic/${slug}/canon?label=${encodeURIComponent(theme.name)}`);
   }
 
   return (
@@ -321,7 +321,7 @@ export default function BrowsePage() {
 
   function goToTopic(theme: Theme) {
     const slug = theme.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-    router.push(`/topic/${slug}?label=${encodeURIComponent(theme.name)}`);
+    router.push(`/topic/${slug}/canon?label=${encodeURIComponent(theme.name)}`);
   }
 
   return (

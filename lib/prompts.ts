@@ -46,28 +46,35 @@ Topic: ${topic}`;
 }
 
 export function canonPrompt(topic: string) {
-  return `Generate the complete Knowledge Space for "${topic}" — 20 to 30 concept objects covering the field from foundational prerequisites to the active research frontier.
+  return `Generate the complete Knowledge Space for "${topic}" — 22 to 28 concept objects covering ALL five levels from foundational prerequisites to the active research frontier.
 
 Output ONLY concept objects in NDJSON format (one complete JSON object per line). No other object types. No array brackets. No commas between objects. Nothing but NDJSON.
 
-OUTPUT ORDER: strictly foundational-first. A concept must appear AFTER all of its prerequisites in the stream. Begin with the concepts that have empty prerequisites arrays, then work outward.
+OUTPUT ORDER: strictly foundational-first. A concept must appear AFTER all of its prerequisites in the stream.
+
+MANDATORY LEVEL DISTRIBUTION — you MUST hit all five levels:
+- FOUNDATIONAL: 4–5 concepts (universal prerequisites, the absolute starting point)
+- INTERMEDIATE: 4–5 concepts (builds theoretical sophistication)
+- ADVANCED: 4–6 concepts (deep mastery of the core apparatus)
+- SPECIALIZATION: 5–7 concepts (named specialist tracks — where the field truly branches; use REAL specialization names e.g. for QM: Quantum Field Theory, Quantum Information, Condensed Matter, Quantum Optics)
+- RESEARCH: 3–4 concepts (active frontier — what researchers are doing RIGHT NOW)
+
+CRITICAL: If you have output 12+ concepts and none are SPECIALIZATION yet, skip ahead to SPECIALIZATION immediately. Do NOT stop before outputting SPECIALIZATION and RESEARCH concepts.
 
 Each concept object must have this exact shape:
-{"_type":"concept","id":"kebab-case-id","name":"Concept Name","level":"FOUNDATIONAL","category":"Brief Category Label","description":"Five sentences: (1) define it in plain English as if to a smart non-expert, (2) what problem it solves or what would be impossible without it, (3) how it connects to prerequisites, (4) a surprising or non-obvious aspect, (5) why researchers still care about it today.","analogy":"One concrete everyday analogy that makes the concept immediately tangible — one or two sentences.","prerequisites":["id-of-required-concept"],"unlocks":["id-of-concept-this-enables"],"figures":[{"name":"Full Name","years":"1875–1941","contribution":"Two to three sentences: their specific contribution in plain English, what problem they solved, why it still matters.","surprising_fact":"One non-obvious fact a student would find remarkable."}],"works":[{"title":"Full Title","authors":["Author Name"],"year":1966,"category":"PEDAGOGICAL","why_essential":"One to two sharp sentences on why this specific work is indispensable for THIS concept.","what_you_gain":"What you can do or understand after engaging with this work.","reading_time":"Concrete estimate e.g. 3-4 months"}],"historical_moment":{"year":1902,"title":"Short title of the historical event","description":"Two to three sentences: what happened, who did it, why it was a turning point.","significance":"One sentence on the lasting impact."},"milestone":"What you can do after mastering this concept — one sentence, active voice."}
+{"_type":"concept","id":"kebab-case-id","name":"Concept Name","level":"FOUNDATIONAL","category":"Brief Category Label","description":"Three to four sentences: (1) define it clearly for a smart non-expert, (2) what problem it solves and what would be impossible without it, (3) a surprising or non-obvious aspect that makes it interesting.","analogy":"One concrete everyday analogy — one sentence.","prerequisites":["id-of-required-concept"],"unlocks":["id-of-concept-this-enables"],"figures":[{"name":"Full Name","years":"1875–1941","contribution":"Two sentences: their specific contribution and why it still matters.","surprising_fact":"One non-obvious fact."}],"works":[{"title":"Full Title","authors":["Author Name"],"year":1966,"category":"PEDAGOGICAL","why_essential":"Why this specific work is the right one for THIS concept — one sharp sentence.","what_you_gain":"What you can do after engaging with this work.","reading_time":"e.g. 3–4 months"}],"historical_moment":{"year":1902,"title":"Short event title","description":"Two sentences on what happened and why it was a turning point.","significance":"One sentence on lasting impact."},"milestone":"What you can do after mastering this — one sentence, active voice."}
 
-LEVEL values (use exactly one per concept):
-- FOUNDATIONAL — universal prerequisites, every student starts here
-- INTERMEDIATE — builds theoretical sophistication on foundations
-- ADVANCED — deep mastery of the main apparatus
-- SPECIALIZATION — where the field splits into named specialist paths
-- RESEARCH — active frontier, what researchers are working on now
+WORKS — be comprehensive and specific per concept:
+- figures array: 1–2 entries
+- works array: 2–4 entries per concept. Include the BEST pedagogical work AND the seminal/original source where relevant. Use real, specific titles with correct authors and years.
+- historical_moment: null only for concepts invented after 2010 — otherwise always include one
+
+LEVEL values: FOUNDATIONAL | INTERMEDIATE | ADVANCED | SPECIALIZATION | RESEARCH
+work category: PEDAGOGICAL | SEMINAL | BREAKTHROUGH
 
 RULES:
-- prerequisites and unlocks contain kebab-case IDs only — IDs that appear as "id" fields elsewhere in THIS output
-- A concept may have an empty prerequisites array [] if it is a true starting point
-- figures array: 1–3 entries; works array: 1–3 entries
-- historical_moment may be null only for very modern computational concepts with no clear founding moment — use null (not omit the key)
-- Every ID used in prerequisites or unlocks must correspond to a concept that IS output in this response
+- prerequisites and unlocks contain kebab-case IDs that appear as "id" fields in THIS output
+- Every ID in prerequisites/unlocks must correspond to a concept output in this response
 - No markdown, no explanation text, no array wrappers, only NDJSON
 
 Topic: ${topic}`;

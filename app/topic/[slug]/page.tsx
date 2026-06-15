@@ -10,5 +10,5 @@ export default async function TopicIndex({
   const { slug } = await params;
   const { label } = await searchParams;
   const labelParam = label ? `?label=${encodeURIComponent(label)}` : "";
-  redirect(`/topic/${slug}/concepts${labelParam}`);
+  redirect(`/topic/${slug}/canon${labelParam}`);
 }

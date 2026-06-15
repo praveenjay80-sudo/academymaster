@@ -10,7 +10,7 @@ export async function POST(req: Request) {
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        await streamToController(canonPrompt(topic), controller, BEGINNER_SYSTEM, 22000);
+        await streamToController(canonPrompt(topic), controller, BEGINNER_SYSTEM, 32000);
       } catch (err) {
         controller.error(err);
       }

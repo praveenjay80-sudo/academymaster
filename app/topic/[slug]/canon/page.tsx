@@ -263,6 +263,108 @@ function ConceptDetailPanel({
   );
 }
 
+// ── All Works view ────────────────────────────────────────────────────────────
+
+interface AggWork {
+  title: string;
+  authors: string[];
+  year: number;
+  category: "PEDAGOGICAL" | "SEMINAL" | "BREAKTHROUGH";
+  why_essential: string;
+  what_you_gain: string;
+  reading_time: string;
+  conceptNames: string[];
+}
+
+const CAT_ORDER = { PEDAGOGICAL: 0, SEMINAL: 1, BREAKTHROUGH: 2 };
+const CAT_LABEL: Record<string, string> = { PEDAGOGICAL: "Best for learning", SEMINAL: "Original sources", BREAKTHROUGH: "Paradigm-shifting" };
+
+function AllWorksView({ concepts }: { concepts: KSConcept[] }) {
+  // Aggregate works across all concepts, dedup by title
+  const worksMap = new Map<string, AggWork>();
+  concepts.forEach(c => {
+    c.works?.forEach(w => {
+      const key = w.title.toLowerCase().replace(/\s+/g, " ").trim();
+      if (worksMap.has(key)) {
+        worksMap.get(key)!.conceptNames.push(c.name);
+      } else {
+        worksMap.set(key, { ...w, conceptNames: [c.name] });
+      }
+    });
+  });
+
+  const byCategory: Record<string, AggWork[]> = { PEDAGOGICAL: [], SEMINAL: [], BREAKTHROUGH: [] };
+  worksMap.forEach(w => { (byCategory[w.category] ?? byCategory.PEDAGOGICAL).push(w); });
+  Object.values(byCategory).forEach(arr => arr.sort((a, b) => (a.year || 9999) - (b.year || 9999)));
+
+  const total = worksMap.size;
+
+  return (
+    <div style={{ flex: 1, overflowY: "auto", padding: "28px 32px", background: "#0d1117" }}>
+      <div style={{ maxWidth: 860, margin: "0 auto" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 28 }}>
+          <h2 style={{ color: "#e8dcc8", fontFamily: "Georgia, serif", fontSize: 20, fontWeight: "bold", margin: 0 }}>
+            Complete Reading List
+          </h2>
+          <span style={{ fontSize: 11, color: "#4b5563" }}>{total} work{total !== 1 ? "s" : ""} across {concepts.length} concepts</span>
+        </div>
+
+        {(["PEDAGOGICAL", "SEMINAL", "BREAKTHROUGH"] as const).map(cat => {
+          const works = byCategory[cat];
+          if (!works.length) return null;
+          const cc = CAT_COLOR[cat] ?? "#60a5fa";
+          return (
+            <div key={cat} style={{ marginBottom: 40 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
+                <span style={{ fontSize: 10, color: cc, fontWeight: "bold", letterSpacing: 1.2 }}>{cat}</span>
+                <div style={{ flex: 1, height: 1, background: cc + "30" }} />
+                <span style={{ fontSize: 10, color: "#4b5563" }}>{CAT_LABEL[cat]} · {works.length} work{works.length !== 1 ? "s" : ""}</span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {works.map((w, i) => (
+                  <div key={i} style={{ padding: "14px 16px", borderRadius: 10, background: cc + "0a", border: `1px solid ${cc}28` }}>
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 8 }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ color: "#e8dcc8", fontFamily: "Georgia, serif", fontSize: 14, fontWeight: "bold", lineHeight: 1.3, marginBottom: 3 }}>
+                          📚 {w.title}
+                        </div>
+                        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                          <span style={{ color: "#6b7280", fontSize: 11 }}>{w.authors.join(", ")}</span>
+                          {w.year > 0 && <span style={{ color: "#4b5563", fontSize: 10 }}>{w.year}</span>}
+                          <span style={{ color: "#4b5563", fontSize: 10 }}>⏱ {w.reading_time}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <p style={{ color: "#9ca3af", fontSize: 12, lineHeight: 1.7, margin: "0 0 6px" }}>{w.why_essential}</p>
+                    {w.what_you_gain && (
+                      <p style={{ color: cc, fontSize: 11, lineHeight: 1.6, margin: "0 0 8px", fontStyle: "italic" }}>After this: {w.what_you_gain}</p>
+                    )}
+                    {w.conceptNames.length > 0 && (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                        {w.conceptNames.map((n, j) => (
+                          <span key={j} style={{ fontSize: 9, padding: "2px 7px", borderRadius: 8, background: "#1c2333", color: "#6b7280", border: "1px solid #2d3748" }}>
+                            {n}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+
+        {total === 0 && (
+          <div style={{ color: "#4b5563", fontFamily: "Georgia, serif", fontSize: 14, paddingTop: 40, textAlign: "center" }}>
+            Works will appear here as concepts stream in…
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Level legend ───────────────────────────────────────────────────────────────
 
 const LEVELS: KSLevel[] = ["FOUNDATIONAL", "INTERMEDIATE", "ADVANCED", "SPECIALIZATION", "RESEARCH"];
@@ -293,6 +395,7 @@ function CanonInner() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [gen,        setGen]        = useState(0);
   const [layoutKey,  setLayoutKey]  = useState(0);
+  const [view,       setView]       = useState<"graph" | "works">("graph");
 
   const abortRef     = useRef<AbortController | null>(null);
   const conceptsRef  = useRef<KSConcept[]>([]);
@@ -415,14 +518,23 @@ function CanonInner() {
 
       {/* Status bar */}
       <div style={{ height: 36, flexShrink: 0, display: "flex", alignItems: "center", gap: 12, padding: "0 14px", borderBottom: "1px solid #1e2a3a", background: "rgba(13,17,23,0.95)" }}>
-        {/* Left: count + legend */}
+        {/* Left: view toggle + count + legend */}
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {/* Toggle */}
+          <div style={{ display: "flex", borderRadius: 5, border: "1px solid #2d3748", overflow: "hidden" }}>
+            {(["graph", "works"] as const).map(v => (
+              <button key={v} onClick={() => setView(v)}
+                style={{ padding: "2px 10px", background: view === v ? "#2d3748" : "none", border: "none", color: view === v ? "#e8dcc8" : "#4b5563", fontSize: 10, cursor: "pointer", fontFamily: "Georgia, serif" }}>
+                {v === "graph" ? "◉ Graph" : "📚 Works"}
+              </button>
+            ))}
+          </div>
           <span style={{ fontSize: 11, color: "#4b5563" }}>
             {concepts.length > 0
-              ? `◉ ${concepts.length} concept${concepts.length !== 1 ? "s" : ""}${isStreaming ? " · mapping…" : " · complete"}`
-              : isStreaming ? "◉ mapping field…" : "◉ Knowledge Space"}
+              ? `${concepts.length} concept${concepts.length !== 1 ? "s" : ""}${isStreaming ? " · mapping…" : " · complete"}`
+              : isStreaming ? "mapping field…" : "Knowledge Space"}
           </span>
-          {concepts.length > 0 && <LevelLegend />}
+          {view === "graph" && concepts.length > 0 && <LevelLegend />}
         </div>
 
         {/* Right: controls */}
@@ -447,7 +559,7 @@ function CanonInner() {
               Error — retry
             </button>
           )}
-          {selectedConcept && (
+          {view === "graph" && selectedConcept && (
             <button onClick={() => graphRef.current?.fitAll()}
               style={{ padding: "3px 10px", background: "none", border: "1px solid #2d3748", borderRadius: 5, color: "#4b5563", fontSize: 10, cursor: "pointer" }}
               onMouseEnter={e => e.currentTarget.style.borderColor = "#c9a84c"}
@@ -458,45 +570,46 @@ function CanonInner() {
         </div>
       </div>
 
-      {/* Main area: graph + optional detail panel */}
+      {/* Main area */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-        {/* Graph */}
-        <div style={{
-          flex: 1,
-          minWidth: 0,
-          marginRight: selectedConcept ? 380 : 0,
-          transition: "margin-right 0.25s ease",
-        }}>
-          {concepts.length === 0 && !isStreaming && (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#4b5563", fontFamily: "Georgia, serif", fontSize: 14 }}>
-              {status === "idle" ? "Initializing…" : "No concepts found — try regenerating."}
+        {view === "works" ? (
+          <AllWorksView concepts={concepts} />
+        ) : (
+          <>
+            {/* Graph */}
+            <div style={{ flex: 1, minWidth: 0, marginRight: selectedConcept ? 380 : 0, transition: "margin-right 0.25s ease" }}>
+              {concepts.length === 0 && !isStreaming && (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#4b5563", fontFamily: "Georgia, serif", fontSize: 14 }}>
+                  {status === "idle" ? "Initializing…" : "No concepts found — try regenerating."}
+                </div>
+              )}
+              {concepts.length === 0 && isStreaming && (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#4b5563", fontFamily: "Georgia, serif", fontSize: 14 }}>
+                  Mapping the field…
+                </div>
+              )}
+              {concepts.length > 0 && (
+                <KnowledgeSpaceGraph
+                  key={layoutKey}
+                  ref={graphRef}
+                  nodes={nodesWithSelection}
+                  edges={edges}
+                  selectedId={selectedId}
+                  onSelect={handleSelect}
+                />
+              )}
             </div>
-          )}
-          {concepts.length === 0 && isStreaming && (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "#4b5563", fontFamily: "Georgia, serif", fontSize: 14 }}>
-              Mapping the field…
-            </div>
-          )}
-          {concepts.length > 0 && (
-            <KnowledgeSpaceGraph
-              key={layoutKey}
-              ref={graphRef}
-              nodes={nodesWithSelection}
-              edges={edges}
-              selectedId={selectedId}
-              onSelect={handleSelect}
-            />
-          )}
-        </div>
 
-        {/* Detail panel */}
-        {selectedConcept && (
-          <ConceptDetailPanel
-            concept={selectedConcept}
-            onClose={() => setSelectedId(null)}
-            onNavigate={handleNavigate}
-            allConcepts={concepts}
-          />
+            {/* Detail panel */}
+            {selectedConcept && (
+              <ConceptDetailPanel
+                concept={selectedConcept}
+                onClose={() => setSelectedId(null)}
+                onNavigate={handleNavigate}
+                allConcepts={concepts}
+              />
+            )}
+          </>
         )}
       </div>
     </div>
