@@ -4,38 +4,17 @@ import { useParams, usePathname, useSearchParams } from "next/navigation";
 import { Suspense, useState, useEffect } from "react";
 
 const TABS = [
-  { id: "concepts", label: "◈ Concepts", desc: "Deep concept map" },
-  { id: "works", label: "📚 Works", desc: "Books & papers" },
-  { id: "roadmap", label: "🗺️ Roadmap", desc: "Learning path" },
-  { id: "bigpicture", label: "🌐 Big Picture", desc: "History & context" },
+  { id: "canon",    label: "◈ Canon",    desc: "Unified field view" },
   { id: "practice", label: "✏️ Practice", desc: "Exercises & quizzes" },
-  { id: "discover", label: "🔭 Discover", desc: "What's next" },
-  { id: "tutor", label: "🎓 Tutor", desc: "Socratic dialogue" },
-  { id: "notebooklm", label: "🎙️ NotebookLM", desc: "AI workspace" },
+  { id: "tutor",    label: "🎓 Tutor",   desc: "Socratic dialogue" },
 ];
 
 function clearTopicCache(slug: string, label: string) {
-  // Fixed keys
   [
-    `sc2:roadmap:${slug}`,
-    `sc2:bigpicture:${slug}`,
     `sc2:practice:${slug}`,
-    `sc2:discover:${slug}`,
-    `concepts-list-v2:${slug}`,
-    `works-list-v3:${slug}`,
+    `canon-v1:${slug}`,
     `tutor-session:${slug}`,
   ].forEach(k => localStorage.removeItem(k));
-
-  // Dynamic keys: work chapters and concept deep-dives for this topic
-  const toDelete: string[] = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const k = localStorage.key(i)!;
-    if (
-      k.startsWith(`work-chapters:${label}:`) ||
-      k.startsWith(`concept-deep:${label}:`)
-    ) toDelete.push(k);
-  }
-  toDelete.forEach(k => localStorage.removeItem(k));
 }
 
 function TopicLayoutInner({ children }: { children: React.ReactNode }) {
@@ -56,7 +35,7 @@ function TopicLayoutInner({ children }: { children: React.ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
 
-  const activeTab = TABS.find(t => pathname.includes(`/${t.id}`))?.id || "concepts";
+  const activeTab = TABS.find(t => pathname.includes(`/${t.id}`))?.id || "canon";
 
   function handleReset() {
     if (!confirm(`Clear all cached content for "${label}"? You'll need to regenerate each tab.`)) return;

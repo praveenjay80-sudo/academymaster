@@ -45,6 +45,44 @@ Rules:
 Topic: ${topic}`;
 }
 
+export function canonPrompt(topic: string) {
+  return `Generate the complete Canon for "${topic}" — a fully cross-referenced knowledge base covering every dimension of the field. Output typed NDJSON objects in this exact order: figures first, then concepts, then works, then events, then stages. Every ID must be a consistent kebab-case slug used identically across all cross-references.
+
+FIGURES (5-8 key people who built this field):
+{"_type":"figure","id":"kolmogorov","name":"Andrei Kolmogorov","years":"1903–1987","contribution":"2-3 sentences: their specific contribution in plain English, what problem they solved, why it still matters today.","concept_ids":["probability-axioms","measure-spaces","conditional-expectation"],"work_ids":["grundbegriffe"],"influenced_by":["hilbert","borel"],"influenced":["doob","dynkin"],"surprising_fact":"One non-obvious fact about them that a student would find remarkable."}
+
+CONCEPTS (20-30 core ideas, ordered foundational → advanced):
+{"_type":"concept","id":"probability-axioms","name":"Kolmogorov Axioms","description":"3-4 sentences: what it is in plain English, why it matters, what would be impossible without it.","difficulty":"FOUNDATIONAL","category":"Foundations","prerequisites":[],"unlocks":["conditional-probability","random-variables"],"figure_ids":["kolmogorov"],"work_ids":["grundbegriffe","billingsley"],"analogy":"One concrete everyday analogy that makes the concept immediately tangible."}
+
+WORKS (8-15 essential works, ordered beginner → advanced):
+{"_type":"work","id":"billingsley","title":"Probability and Measure","authors":["Patrick Billingsley"],"year":1979,"category":"PEDAGOGICAL","difficulty":"ADVANCED","reading_time":"4-6 months","concept_ids":["measure-spaces","probability-axioms","convergence-theorems"],"why_essential":"1-2 sharp sentences on why this specific work is indispensable.","what_you_gain":"What you can do/understand after reading this.","prereqs":"What to know before starting."}
+
+EVENTS (15-25 chronological milestones, ordered by year):
+{"_type":"event","id":"kolmogorov-axioms-1933","year":1933,"era":"Classical Period","title":"Kolmogorov Axiomatizes Probability","description":"2-3 sentences: what happened, who did it, why it was a turning point.","significance":"One sentence on the lasting impact.","event_type":"PARADIGM_SHIFT","figure_id":"kolmogorov","concept_id":"probability-axioms","work_id":"grundbegriffe"}
+
+STAGES (12-20 reading path stages — the learning path from zero to mastery):
+{"_type":"stage","stage_id":"1","level":"FOUNDATIONS","layout":"sequential","parallel_group":null,"track":null,"track_position":null,"title":"Basic Probability","concept_ids":["sample-space","probability-axioms","events"],"work_id":"blitzstein","work_title":"Introduction to Probability","work_authors":["Joseph Blitzstein","Jessica Hwang"],"work_category":"PEDAGOGICAL","duration":"3-4 weeks","milestone":"Can calculate probabilities for discrete sample spaces and apply Bayes' theorem.","prerequisites":["No prerequisites — this is the starting point"]}
+
+Parallel stage example (shares parallel_group, has track + track_position):
+{"_type":"stage","stage_id":"spec-a-1","level":"SPECIALIZATION","layout":"parallel","parallel_group":"spec","track":"Stochastic Processes","track_position":1,"title":"Markov Chains","concept_ids":["markov-chains","transition-matrices"],"work_id":"norris","work_title":"Markov Chains","work_authors":["James Norris"],"work_category":"PEDAGOGICAL","duration":"2-3 months","milestone":"Can analyze discrete-time Markov chains and compute stationary distributions.","prerequisites":["All FOUNDATIONS stages","Completion of INTERMEDIATE stages"]}
+
+event_type must be exactly one of: DISCOVERY | PUBLICATION | PARADIGM_SHIFT | APPLICATION | CONTROVERSY
+work category must be exactly one of: PEDAGOGICAL | SEMINAL | BREAKTHROUGH
+concept difficulty must be exactly one of: FOUNDATIONAL | INTERMEDIATE | ADVANCED
+stage level must be exactly one of: FOUNDATIONS | INTERMEDIATE | ADVANCED | SPECIALIZATION | RESEARCH
+
+Rules:
+- IDs must be consistent — use exactly the same kebab slug everywhere
+- Every concept must have at least one figure_id and one work_id
+- Every figure must have at least two concept_ids
+- Every event must have at least one of: figure_id, concept_id, work_id (using EXACT IDs generated above)
+- Every stage must have 2-5 concept_ids matching EXACT concept IDs generated above
+- Parallel stages share parallel_group; stages in same track share track name; track_position is 1-based
+- No markdown, no array wrappers, no commas between objects, nothing but NDJSON
+
+Topic: ${topic}`;
+}
+
 export function mapWorksPrompt(topic: string) {
   return `Generate the complete reading list for mastering "${topic}" from absolute zero to the research frontier.
 
