@@ -18,8 +18,10 @@ Do NOT put commas between objects.
 Output exactly one complete JSON object per line, nothing else before or after.
 
 Example of correct output format:
-{"id":"basic-idea","name":"Basic Idea","description":"The simplest starting point — explain it like the reader has never heard of this field.","difficulty":"FOUNDATIONAL","prerequisites":[],"unlocks":["next-concept"],"category":"Foundations"}
-{"id":"next-concept","name":"Next Concept","description":"Builds on basic-idea — still explained simply.","difficulty":"INTERMEDIATE","prerequisites":["basic-idea"],"unlocks":[],"category":"Core Ideas"}
+{"id":"basic-idea","name":"Basic Idea","description":"The simplest starting point — explain it like the reader has never heard of this field.","difficulty":"FOUNDATIONAL","prerequisites":[],"unlocks":["next-concept"],"category":"Foundations","key_works":["Work Title A","Work Title B"]}
+{"id":"next-concept","name":"Next Concept","description":"Builds on basic-idea — still explained simply.","difficulty":"INTERMEDIATE","prerequisites":["basic-idea"],"unlocks":[],"category":"Core Ideas","key_works":["Work Title B"]}
+
+key_works: array of 1-3 short titles of canonical works (books or papers) that best explain this concept. Use the actual work titles from the topic's reading list.
 
 Topic: ${topic}
 

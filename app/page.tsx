@@ -71,6 +71,19 @@ export default function HomePage() {
         </div>
       </form>
 
+      {/* Browse link */}
+      <div className="mb-4">
+        <a
+          href="/browse"
+          className="inline-block px-4 py-2 rounded-lg text-sm transition-all"
+          style={{ color: 'var(--text-muted)', border: '1px solid var(--border)', fontFamily: 'Georgia, serif', textDecoration: 'none' }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)'; (e.currentTarget as HTMLElement).style.color = 'var(--accent)'; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'; }}
+        >
+          ◈ Browse by Theme
+        </a>
+      </div>
+
       {/* Example topics */}
       <div className="max-w-xl w-full">
         <p className="text-center text-sm mb-3" style={{ color: 'var(--text-muted)' }}>Try one of these:</p>

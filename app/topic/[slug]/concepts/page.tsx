@@ -1,6 +1,9 @@
 "use client";
 import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, Suspense } from "react";
+import dynamic from "next/dynamic";
+
+const ConceptGraph = dynamic(() => import("@/components/ConceptGraph"), { ssr: false });
 
 interface Concept {
   id: string;
@@ -10,6 +13,7 @@ interface Concept {
   prerequisites: string[];
   unlocks: string[];
   category: string;
+  key_works?: string[];
 }
 
 const DIFF_COLOR: Record<string, string> = {
@@ -178,6 +182,7 @@ function ConceptsPageInner() {
   const [filter, setFilter] = useState<"ALL" | "FOUNDATIONAL" | "INTERMEDIATE" | "ADVANCED">("ALL");
   const [search, setSearch] = useState("");
   const [progress, setProgress] = useState<Record<string, string>>({});
+  const [viewMode, setViewMode] = useState<"list" | "graph">("list");
   const hasFetched = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const cacheKey = `concepts-list-v2:${slug}`;
@@ -354,6 +359,36 @@ function ConceptsPageInner() {
       {/* Show this only once we have at least one concept OR we're done */}
       {(concepts.length > 0 || done) && (
         <>
+          {/* View toggle */}
+          <div className="flex items-center gap-2 mb-5">
+            {(["list", "graph"] as const).map(mode => (
+              <button
+                key={mode}
+                onClick={() => setViewMode(mode)}
+                className="px-4 py-1.5 rounded text-sm transition-all"
+                style={{
+                  background: viewMode === mode ? "var(--accent)" : "var(--bg-card)",
+                  color: viewMode === mode ? "#0d1117" : "var(--text-muted)",
+                  border: "1px solid " + (viewMode === mode ? "var(--accent)" : "var(--border)"),
+                  fontFamily: "Georgia,serif",
+                  fontWeight: viewMode === mode ? "600" : "400",
+                }}
+              >
+                {mode === "list" ? "≡ List" : "◉ Graph"}
+              </button>
+            ))}
+          </div>
+
+          {/* Graph view */}
+          {viewMode === "graph" && (
+            <div className="mb-8" style={{ position: "relative" }}>
+              <ConceptGraph concepts={concepts} onSelect={setSelected} />
+            </div>
+          )}
+
+          {/* List view content */}
+          {viewMode === "list" && <>
+
           {/* Stats + search bar */}
           <div className="flex flex-wrap items-center gap-3 mb-6">
             <div className="flex gap-4">
@@ -429,6 +464,7 @@ function ConceptsPageInner() {
               <span style={{ fontFamily: 'Georgia,serif', fontSize: '0.9rem' }}>Finding more concepts…</span>
             </div>
           )}
+          </>}
         </>
       )}
 
