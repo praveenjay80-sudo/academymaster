@@ -336,6 +336,114 @@ function TrackColumn({ track, levelColor }: { track: TrackGroup; levelColor: str
   );
 }
 
+// ── Parallel block (with scroll buttons) ─────────────────────────────────────
+
+function ParallelBlock({
+  tracks,
+  levelColor,
+  showFanout,
+  totalTracks,
+}: {
+  tracks: TrackGroup[];
+  levelColor: string;
+  showFanout: boolean;
+  totalTracks: number;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [canLeft, setCanLeft] = useState(false);
+  const [canRight, setCanRight] = useState(false);
+
+  function updateScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    setCanLeft(el.scrollLeft > 4);
+    setCanRight(el.scrollLeft < el.scrollWidth - el.clientWidth - 4);
+  }
+
+  useEffect(() => {
+    updateScroll();
+    window.addEventListener("resize", updateScroll);
+    return () => window.removeEventListener("resize", updateScroll);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tracks]);
+
+  function scroll(dir: number) {
+    scrollRef.current?.scrollBy({ left: dir * 290, behavior: "smooth" });
+  }
+
+  return (
+    <div>
+      {showFanout && (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", margin: "4px 0 8px" }}>
+          <div style={{ width: 1, height: 12, background: "var(--border)" }} />
+          <div style={{
+            fontSize: 9, color: levelColor, letterSpacing: 0.8,
+            padding: "2px 12px",
+            border: `1px solid ${levelColor}45`,
+            borderRadius: 8,
+            background: levelColor + "10",
+          }}>
+            {totalTracks} PARALLEL TRACK{totalTracks !== 1 ? "S" : ""} — study simultaneously
+          </div>
+        </div>
+      )}
+
+      <div style={{ position: "relative" }}>
+        {/* Left scroll button */}
+        {canLeft && (
+          <button
+            onClick={() => scroll(-1)}
+            aria-label="Scroll left"
+            style={{
+              position: "absolute", left: 0, top: "50%", transform: "translateY(-50%)",
+              zIndex: 3, width: 34, height: 52,
+              background: "rgba(13,17,23,0.90)",
+              border: `1px solid ${levelColor}55`,
+              borderLeft: "none",
+              borderRadius: "0 8px 8px 0",
+              color: levelColor, fontSize: 22, lineHeight: 1,
+              cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+              boxShadow: `3px 0 12px rgba(0,0,0,0.4)`,
+            }}
+          >‹</button>
+        )}
+
+        {/* Scrollable container */}
+        <div
+          ref={scrollRef}
+          onScroll={updateScroll}
+          style={{ overflowX: "auto", paddingBottom: 8 }}
+        >
+          <div style={{ display: "flex", gap: 10, minWidth: "fit-content", padding: "2px 4px" }}>
+            {tracks.map((track, ti) => (
+              <TrackColumn key={ti} track={track} levelColor={levelColor} />
+            ))}
+          </div>
+        </div>
+
+        {/* Right scroll button */}
+        {canRight && (
+          <button
+            onClick={() => scroll(1)}
+            aria-label="Scroll right"
+            style={{
+              position: "absolute", right: 0, top: "50%", transform: "translateY(-50%)",
+              zIndex: 3, width: 34, height: 52,
+              background: "rgba(13,17,23,0.90)",
+              border: `1px solid ${levelColor}55`,
+              borderRight: "none",
+              borderRadius: "8px 0 0 8px",
+              color: levelColor, fontSize: 22, lineHeight: 1,
+              cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+              boxShadow: `-3px 0 12px rgba(0,0,0,0.4)`,
+            }}
+          >›</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Sequential arrow ──────────────────────────────────────────────────────────
 
 function Arrow() {
@@ -382,31 +490,12 @@ function Waterfall({ groups, streaming }: { groups: RenderGroup[]; streaming: bo
           return (
             <div key={`par-${gi}`}>
               {showDivider && <LevelDivider level={groupLevel} />}
-
-              {/* Fan-out label */}
-              {gi > 0 && (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", margin: "4px 0 8px" }}>
-                  <div style={{ width: 1, height: 12, background: "var(--border)" }} />
-                  <div style={{
-                    fontSize: 9, color: meta.color, letterSpacing: 0.8,
-                    padding: "2px 12px",
-                    border: `1px solid ${meta.color}45`,
-                    borderRadius: 8,
-                    background: meta.color + "10",
-                  }}>
-                    {totalTracks} PARALLEL TRACK{totalTracks !== 1 ? "S" : ""} — study simultaneously
-                  </div>
-                </div>
-              )}
-
-              {/* Horizontal scroll track grid */}
-              <div style={{ overflowX: "auto", paddingBottom: 8 }}>
-                <div style={{ display: "flex", gap: 10, minWidth: "fit-content", paddingLeft: 2 }}>
-                  {group.tracks.map((track, ti) => (
-                    <TrackColumn key={ti} track={track} levelColor={meta.color} />
-                  ))}
-                </div>
-              </div>
+              <ParallelBlock
+                tracks={group.tracks}
+                levelColor={meta.color}
+                showFanout={gi > 0}
+                totalTracks={totalTracks}
+              />
             </div>
           );
         }
