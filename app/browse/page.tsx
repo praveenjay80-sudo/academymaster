@@ -7,7 +7,7 @@ interface Theme {
   id: string;
   name: string;
   description: string;
-  specialization?: string;
+  big_question?: string;
   domain?: string;
   field?: string;
 }
@@ -15,7 +15,7 @@ interface Theme {
 const CACHE_TTL = 14 * 24 * 60 * 60 * 1000;
 
 function cacheKey(domain: string, field: string) {
-  return `themes-v2:${domain}:${field}`;
+  return `themes-v3:${domain}:${field}`;
 }
 
 function loadCached(domain: string, field: string): Theme[] | null {
@@ -209,28 +209,40 @@ function ThemePanel({ domain, field }: { domain: string; field: string }) {
             </div>
           )}
 
-          {/* Group by specialization */}
+          {/* Group by big question */}
           {(() => {
             const groups: Record<string, Theme[]> = {};
             const order: string[] = [];
             for (const t of themes) {
-              const spec = t.specialization || "General";
-              if (!groups[spec]) { groups[spec] = []; order.push(spec); }
-              groups[spec].push(t);
+              const q = t.big_question || "General";
+              if (!groups[q]) { groups[q] = []; order.push(q); }
+              groups[q].push(t);
             }
             let globalIndex = 0;
-            return order.map(spec => (
-              <div key={spec} style={{ marginBottom: 40 }}>
-                {/* Specialization header */}
-                <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 20 }}>
-                  <div style={{ fontSize: 11, color: "var(--accent)", letterSpacing: "0.12em", textTransform: "uppercase", fontFamily: "Georgia, serif", fontWeight: "bold", whiteSpace: "nowrap" }}>
-                    {spec}
+            return order.map(q => (
+              <div key={q} style={{ marginBottom: 44 }}>
+                {/* Big question header */}
+                <div style={{ marginBottom: 18 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
+                    <span style={{ color: "var(--accent)", fontSize: 16, lineHeight: 1 }}>◈</span>
+                    <h3 style={{
+                      fontFamily: "Georgia, serif",
+                      fontSize: 17,
+                      fontWeight: "bold",
+                      color: "var(--text-primary)",
+                      margin: 0,
+                      lineHeight: 1.3,
+                    }}>
+                      {q}
+                    </h3>
                   </div>
-                  <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
-                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{groups[spec].length} themes</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, paddingLeft: 28 }}>
+                    <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>{groups[q].length} themes</div>
+                  </div>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
-                  {groups[spec].map(t => {
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14, paddingLeft: 0 }}>
+                  {groups[q].map(t => {
                     const idx = globalIndex++;
                     return <ThemeCard key={t.id} theme={t} index={idx} onClick={() => goToTopic(t)} />;
                   })}
@@ -241,7 +253,7 @@ function ThemePanel({ domain, field }: { domain: string; field: string }) {
 
           {done && (
             <div style={{ marginTop: 8, fontSize: 12, color: "var(--text-muted)", fontFamily: "Georgia, serif" }}>
-              {themes.length} themes across {new Set(themes.map(t => t.specialization || "General")).size} specialisations · Click any to generate a full mastery guide
+              {themes.length} themes across {new Set(themes.map(t => t.big_question || "General")).size} big questions · Click any to generate a full mastery guide
             </div>
           )}
         </>

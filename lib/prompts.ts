@@ -1,21 +1,23 @@
 export function themesPrompt(domain: string, field: string) {
-  return `Generate a comprehensive set of themes for the field of "${field}" (within "${domain}"), organised by specialisation.
+  return `Generate a comprehensive set of themes for the field of "${field}" (within "${domain}"), grouped by the BIG QUESTIONS the field is trying to answer.
 
-First, identify the 5-8 major specialisations within ${field}. For each specialisation, generate 4-6 themes.
+Step 1: Identify 5-8 fundamental questions that define ${field} as an intellectual pursuit. These should be the deep, sometimes unanswerable questions that drive scholars in this field — questions that feel genuinely important to anyone curious about the world.
 
-A theme is a central idea, underlying question, or intellectual tension — NOT a sub-discipline name or course title.
-Good theme examples from Mathematics: "The Nature of Infinity", "Why Proof Matters", "When Equations Have No Solution"
-Bad examples (these are specialisation names, not themes): "Algebra", "Calculus", "Topology"
+Good big-question examples from Mathematics: "What is a number, really?", "What can be proven — and what lies beyond proof?", "Why does abstract mathematics describe the physical world?"
+Good big-question examples from Philosophy: "What can we know, and how do we know it?", "What makes an action right or wrong?", "What is the nature of mind and consciousness?"
+
+Step 2: For each big question, generate 4-6 themes — specific ideas, tensions, or discoveries that belong under that question.
 
 Output each theme as ONE JSON object per line (NDJSON):
-{"id":"kebab-case-slug","name":"Theme Name (4-8 words)","description":"2-3 plain-English sentences for a curious non-expert. What is the central idea or tension? Why does it matter? Give a concrete example if possible.","specialization":"Name of the specialisation this theme belongs to"}
+{"id":"kebab-case-slug","name":"Theme Name (4-8 words)","description":"2-3 plain-English sentences for a curious non-expert. What is the central idea? Why does it matter? Make it vivid and concrete.","big_question":"The full big question this theme belongs to"}
 
 Rules:
 - NDJSON: one complete object per line, no array brackets, no commas between objects
-- Output all themes for one specialisation before moving to the next
-- Descriptions must be vivid, jargon-free, and concrete — no academic hedging
-- Aim for ~35-45 themes total across all specialisations
-- Cover the full intellectual range of ${field} — foundational and frontier
+- Output all themes for one big question before moving to the next
+- Big questions should be genuine intellectual questions, not category labels — they should end with a question mark
+- Descriptions must be jargon-free and concrete — write for a curious, intelligent non-expert
+- Aim for ~35-45 themes total
+- Cover the full range of ${field} — from foundational to frontier
 
 Domain: ${domain}
 Field: ${field}`;
