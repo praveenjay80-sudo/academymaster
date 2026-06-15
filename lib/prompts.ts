@@ -1,18 +1,29 @@
 export function learningFlowPrompt(topic: string) {
-  return `Generate a complete learning flow for "${topic}" as a series of linked learning stages — each stage bundles the concepts to master AND the key work to read at that moment, ordered from zero knowledge to mastery.
+  return `Generate a COMPREHENSIVE learning roadmap for "${topic}" from zero knowledge to the research frontier, modelling the full complexity of how the field actually develops and branches.
 
-LAYOUT RULES:
-- sequential: this stage MUST follow the previous one because the concepts are direct prerequisites
-- parallel: this stage can be studied SIMULTANEOUSLY with the adjacent stage — they are independent tracks
+Use as many stages as needed (aim for 20-35) to accurately reflect the real learning path. Include all levels, all specialization tracks, and the research frontier.
+
+LEVEL STRUCTURE — always progress in this order:
+1. FOUNDATIONS — universal prerequisites every student needs. Always sequential. 3-6 stages.
+2. INTERMEDIATE — builds sophistication on the foundations. Mostly sequential, at most 2 parallel sub-areas.
+3. ADVANCED — deep mastery of the main theoretical apparatus. May branch into 2-4 parallel advanced tracks that are genuinely independent.
+4. SPECIALIZATION — where the field truly splits into named specialist tracks (3-8 tracks). Each track has its OWN 2-5 sequential stages inside it. This is the most important level — model how experts actually specialize.
+5. RESEARCH — the active frontier. What researchers are working on right now. Can be 1-4 parallel frontier areas.
+
+STAGE ID FORMAT:
+- Sequential stages: "1", "2", "3", "4"
+- Parallel stages: use "pg-trackLetter-position" e.g. "spec-a-1", "spec-a-2", "spec-b-1", "spec-c-1", "spec-c-2"
+  where "spec" = parallel group name, "a"/"b"/"c" = track letter, "1"/"2" = position within that track
 
 Output each stage as ONE JSON object per line (NDJSON):
 
 Sequential stage:
-{"stage":"1","layout":"sequential","parallel_group":null,"concepts":[{"name":"Concept Name","description":"One precise plain-English sentence."}],"work":{"title":"Full Title","authors":["Author Name"],"category":"PEDAGOGICAL","reading_time":"3-4 weeks","why":"Why this work is the right one for this stage."},"duration":"3-4 weeks","milestone":"What you can understand or do after finishing this stage."}
+{"stage":"1","level":"FOUNDATIONS","layout":"sequential","parallel_group":null,"track":null,"track_position":null,"concepts":[{"name":"Concept Name","description":"One precise plain-English sentence."}],"work":{"title":"Full Title","authors":["Author Name"],"category":"PEDAGOGICAL","reading_time":"2-3 weeks","why":"Why this work is the right one for this stage."},"duration":"2-3 weeks","milestone":"What you can do after this stage."}
 
-Parallel stages (same parallel_group string):
-{"stage":"3a","layout":"parallel","parallel_group":"3","concepts":[{"name":"...","description":"..."}],"work":{"title":"...","authors":["..."],"category":"SEMINAL","reading_time":"3-4 months","why":"..."},"duration":"3-4 months","milestone":"..."}
-{"stage":"3b","layout":"parallel","parallel_group":"3","concepts":[{"name":"...","description":"..."}],"work":null,"duration":"2-3 months","milestone":"..."}
+Parallel stage within a specialization track (multiple stages per track, all stages in the group share parallel_group):
+{"stage":"spec-a-1","level":"SPECIALIZATION","layout":"parallel","parallel_group":"spec","track":"Algebraic Number Theory","track_position":1,"concepts":[{"name":"...","description":"..."}],"work":{"title":"...","authors":["..."],"category":"SEMINAL","reading_time":"3-4 months","why":"..."},"duration":"3-4 months","milestone":"..."}
+{"stage":"spec-a-2","level":"SPECIALIZATION","layout":"parallel","parallel_group":"spec","track":"Algebraic Number Theory","track_position":2,"concepts":[{"name":"...","description":"..."}],"work":null,"duration":"2-3 months","milestone":"..."}
+{"stage":"spec-b-1","level":"SPECIALIZATION","layout":"parallel","parallel_group":"spec","track":"Analytic Number Theory","track_position":1,"concepts":[{"name":"...","description":"..."}],"work":{"title":"...","authors":["..."],"category":"PEDAGOGICAL","reading_time":"2-3 months","why":"..."},"duration":"2-3 months","milestone":"..."}
 
 category must be exactly one of:
 - PEDAGOGICAL — written to teach, clearest path to understanding
@@ -20,11 +31,13 @@ category must be exactly one of:
 - BREAKTHROUGH — paradigm-shifting, changed how the field thinks
 
 Rules:
-- First 2-3 stages are always sequential (foundation must be laid in order)
-- Use parallel only when the field genuinely splits into independent tracks that don't depend on each other
+- FOUNDATIONS and INTERMEDIATE must always be sequential stages
+- SPECIALIZATION tracks must reflect how experts in this field ACTUALLY specialize — use real named tracks (e.g. for Mathematics: Algebra, Analysis, Topology, Number Theory, Geometry; for Physics: Quantum Field Theory, General Relativity, Statistical Mechanics, Condensed Matter; for CS: Systems, Theory, ML, PL)
+- Each specialization track should have 2-5 sequential stages that deepen mastery of THAT track
+- All stages in a parallel group share the same parallel_group value; stages in the same track share the same track name
 - Each stage: 2-5 concepts + at most one primary work (work may be null for concept-only stages)
-- Generate 8-14 stages total covering zero to mastery
 - reading_time must be concrete: "1-2 weeks", "2-3 months", "5-6 months"
+- RESEARCH level: name specific open problems, active subfields, or frontier methods
 - No markdown, no array brackets, no commas between objects, output nothing but NDJSON
 
 Topic: ${topic}`;
