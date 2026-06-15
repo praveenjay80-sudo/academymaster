@@ -1,199 +1,195 @@
 "use client";
-import dynamic from "next/dynamic";
-import { useEffect, useState, Suspense } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import type { ConceptItem } from "@/components/ConceptGraph";
 
-const ConceptGraph = dynamic(() => import("@/components/ConceptGraph"), { ssr: false });
+// ── Types ──────────────────────────────────────────────────────────────────────
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+interface Concept {
+  id: string;
+  name: string;
+  description: string;
+  difficulty: "FOUNDATIONAL" | "INTERMEDIATE" | "ADVANCED";
+  prerequisites: string[];
+  unlocks: string[];
+  category: string;
+  key_works?: string[];
+}
 
-interface Work {
-  _type: "essential" | "anti_library";
-  id?: string;
+interface MapWork {
+  order: number;
+  category: "PEDAGOGICAL" | "SEMINAL" | "BREAKTHROUGH";
   title: string;
   authors?: string[];
   year?: number;
-  type?: string;
-  difficulty?: string;
-  plain_description?: string;
-  why_it_matters?: string;
-  prerequisites?: string;
+  difficulty: "BEGINNER" | "INTERMEDIATE" | "ADVANCED";
+  reading_time: string;
+  why_essential?: string;
   what_you_gain?: string;
-  free_access?: string;
+  prereqs?: string;
 }
 
-interface StudiedTopic {
-  slug: string;
-  label: string;
-  concepts: ConceptItem[];
-  works: Work[];
-  firstSeen?: number;
+type Status = "idle" | "streaming" | "done" | "error";
+
+// ── Brace-counting NDJSON extractor ───────────────────────────────────────────
+
+function extractObjects(buf: string): [unknown[], string] {
+  const out: unknown[] = [];
+  let i = 0;
+  while (i < buf.length) {
+    if (buf[i] !== "{") { i++; continue; }
+    let depth = 0, j = i, inStr = false, esc = false;
+    while (j < buf.length) {
+      const ch = buf[j];
+      if (esc) { esc = false; }
+      else if (ch === "\\" && inStr) { esc = true; }
+      else if (ch === '"') { inStr = !inStr; }
+      else if (!inStr) {
+        if (ch === "{") depth++;
+        else if (ch === "}") {
+          depth--;
+          if (depth === 0) {
+            try { out.push(JSON.parse(buf.slice(i, j + 1))); } catch { /**/ }
+            i = j + 1; break;
+          }
+        }
+      }
+      j++;
+    }
+    if (depth > 0) break;
+  }
+  return [out, buf.slice(i)];
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Constants ──────────────────────────────────────────────────────────────────
 
-const TYPE_LABELS: Record<string, string> = {
-  TEXTBOOK: "Textbook",
-  SEMINAL_PAPER: "Paper",
-  POPULAR_SCIENCE: "Popular",
-  SURVEY: "Survey",
-  CLASSIC_ORIGINAL: "Classic",
+const CONCEPT_DIFF_COLOR: Record<string, string> = {
+  FOUNDATIONAL: "#4ade80",
+  INTERMEDIATE: "#c9a84c",
+  ADVANCED: "#f87171",
 };
+const WORK_DIFF_COLOR: Record<string, string> = {
+  BEGINNER: "#4ade80",
+  INTERMEDIATE: "#c9a84c",
+  ADVANCED: "#f87171",
+};
+const CAT_COLOR: Record<string, string> = {
+  PEDAGOGICAL: "#60a5fa",
+  SEMINAL: "#a78bfa",
+  BREAKTHROUGH: "#fb923c",
+};
+const TTL = 14 * 24 * 60 * 60 * 1000;
 
-const DIFF_ORDER: Record<string, number> = { BEGINNER: 0, INTERMEDIATE: 1, ADVANCED: 2 };
+// ── Concept card ───────────────────────────────────────────────────────────────
 
-function estimateTime(type = "", difficulty = ""): string {
-  if (type === "SEMINAL_PAPER") return "2–6 hrs";
-  if (type === "POPULAR_SCIENCE") return "1–2 wks";
-  if (type === "SURVEY") return "2–5 days";
-  if (type === "CLASSIC_ORIGINAL") return difficulty === "BEGINNER" ? "3–6 wks" : "1–3 mo";
-  const map: Record<string, string> = { BEGINNER: "2–4 mo", INTERMEDIATE: "3–6 mo", ADVANCED: "4–8 mo" };
-  return map[difficulty] || "2–4 mo";
-}
-
-function phaseTime(works: Work[], difficulty: string): string {
-  const subset = works.filter(w => w._type === "essential" && w.difficulty === difficulty);
-  if (subset.length === 0) return "";
-  const hasBook = subset.some(w => w.type === "TEXTBOOK" || w.type === "CLASSIC_ORIGINAL");
-  if (difficulty === "BEGINNER") return hasBook ? "2–4 months" : "2–6 weeks";
-  if (difficulty === "INTERMEDIATE") return hasBook ? "3–6 months" : "1–3 months";
-  return hasBook ? "4–8 months" : "2–4 months";
-}
-
-function loadTopics(): StudiedTopic[] {
-  const found: StudiedTopic[] = [];
-  const seen = new Set<string>();
-
-  // topic-meta: all visited topics
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (!key?.startsWith("topic-meta:")) continue;
-    const slug = key.slice("topic-meta:".length);
-    if (seen.has(slug)) continue;
-    seen.add(slug);
-
-    let label = slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
-    let firstSeen: number | undefined;
-    try {
-      const meta = JSON.parse(localStorage.getItem(key)!);
-      if (meta.label) label = meta.label;
-      if (meta.firstSeen) firstSeen = meta.firstSeen;
-    } catch { /**/ }
-
-    let concepts: ConceptItem[] = [];
-    try {
-      const raw = localStorage.getItem(`concepts-list-v2:${slug}`);
-      if (raw) { const { data, ts } = JSON.parse(raw); if (Array.isArray(data)) concepts = data; if (ts && !firstSeen) firstSeen = ts; }
-    } catch { /**/ }
-
-    let works: Work[] = [];
-    try {
-      const raw = localStorage.getItem(`works-list-v3:${slug}`);
-      if (raw) { const { data } = JSON.parse(raw); if (Array.isArray(data)) works = data; }
-    } catch { /**/ }
-
-    found.push({ slug, label, concepts, works, firstSeen });
-  }
-
-  // fallback: concepts-only topics (older sessions)
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (!key?.startsWith("concepts-list-v2:")) continue;
-    const slug = key.slice("concepts-list-v2:".length);
-    if (seen.has(slug)) continue;
-    seen.add(slug);
-    let label = slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
-    let concepts: ConceptItem[] = [];
-    let firstSeen: number | undefined;
-    try { const { data, ts } = JSON.parse(localStorage.getItem(key)!); if (Array.isArray(data)) concepts = data; firstSeen = ts; } catch { /**/ }
-    let works: Work[] = [];
-    try { const raw = localStorage.getItem(`works-list-v3:${slug}`); if (raw) { const { data } = JSON.parse(raw); if (Array.isArray(data)) works = data; } } catch { /**/ }
-    found.push({ slug, label, concepts, works, firstSeen });
-  }
-
-  return found.sort((a, b) => (b.firstSeen ?? 0) - (a.firstSeen ?? 0));
+function ConceptCard({ c }: { c: Concept }) {
+  const color = CONCEPT_DIFF_COLOR[c.difficulty] ?? "#c9a84c";
+  return (
+    <div style={{
+      background: "var(--bg-card)",
+      borderLeft: `3px solid ${color}`,
+      border: `1px solid ${color}20`,
+      borderRadius: 8,
+      padding: "11px 13px",
+      marginBottom: 8,
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 5 }}>
+        <div style={{ color: "var(--text-primary)", fontFamily: "Georgia, serif", fontSize: 14, fontWeight: "bold", lineHeight: 1.3 }}>
+          {c.name}
+        </div>
+        <span style={{ fontSize: 9, padding: "2px 7px", borderRadius: 10, background: color + "22", color, fontWeight: "bold", flexShrink: 0, whiteSpace: "nowrap" }}>
+          {c.difficulty === "FOUNDATIONAL" ? "FOUND." : c.difficulty === "INTERMEDIATE" ? "INTER." : "ADV."}
+        </span>
+      </div>
+      <div style={{ color: "var(--text-secondary)", fontSize: 12, lineHeight: 1.65 }}>{c.description}</div>
+      {c.category && (
+        <div style={{ color: "var(--text-muted)", fontSize: 10, marginTop: 5, letterSpacing: 0.5 }}>{c.category}</div>
+      )}
+      {c.key_works && c.key_works.length > 0 && (
+        <div style={{ color: "var(--text-muted)", fontSize: 10, marginTop: 4 }}>📚 {c.key_works.join(" · ")}</div>
+      )}
+      {c.prerequisites && c.prerequisites.length > 0 && (
+        <div style={{ color: "var(--text-muted)", fontSize: 10, marginTop: 3 }}>
+          Needs: {c.prerequisites.slice(0, 3).join(", ")}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Work card ──────────────────────────────────────────────────────────────────
 
-function WorkCard({ work, index }: { work: Work; index: number }) {
-  const [expanded, setExpanded] = useState(false);
-  const time = estimateTime(work.type, work.difficulty);
-  const typeLabel = TYPE_LABELS[work.type ?? ""] ?? work.type ?? "";
-  const diffColor = work.difficulty === "BEGINNER" ? "#4ade80"
-    : work.difficulty === "INTERMEDIATE" ? "#c9a84c" : "#f87171";
+function WorkCard({ w }: { w: MapWork }) {
+  const [open, setOpen] = useState(false);
+  const catColor = CAT_COLOR[w.category] ?? "#c9a84c";
+  const diffColor = WORK_DIFF_COLOR[w.difficulty] ?? "#c9a84c";
 
   return (
     <div style={{ marginBottom: 10 }}>
       <div
-        onClick={() => setExpanded(e => !e)}
+        onClick={() => setOpen(o => !o)}
         style={{
-          background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 8,
-          padding: "12px 14px", cursor: "pointer", transition: "border-color 0.15s",
+          background: "var(--bg-card)",
+          border: "1px solid var(--border)",
+          borderRadius: open ? "8px 8px 0 0" : 8,
+          padding: "12px 14px",
+          cursor: "pointer",
+          transition: "border-color 0.15s",
         }}
-        onMouseEnter={e => (e.currentTarget.style.borderColor = "var(--accent-dim)")}
+        onMouseEnter={e => (e.currentTarget.style.borderColor = catColor + "80")}
         onMouseLeave={e => (e.currentTarget.style.borderColor = "var(--border)")}
       >
-        {/* Row 1: index + title */}
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-          <div style={{ color: "var(--text-muted)", fontSize: 12, fontFamily: "Georgia, serif", flexShrink: 0, marginTop: 2, minWidth: 20 }}>
-            {index}.
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+          <div style={{ color: catColor, fontSize: 14, fontWeight: "bold", fontFamily: "Georgia, serif", flexShrink: 0, minWidth: 24, marginTop: 1 }}>
+            {w.order}.
           </div>
           <div style={{ flex: 1 }}>
             <div style={{ color: "var(--text-primary)", fontFamily: "Georgia, serif", fontSize: 14, fontWeight: "bold", lineHeight: 1.3 }}>
-              {work.title}
+              {w.title}
             </div>
-            {work.authors && work.authors.length > 0 && (
-              <div style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 2 }}>
-                {work.authors.join(", ")}{work.year ? ` (${work.year})` : ""}
+            {w.authors && w.authors.length > 0 && (
+              <div style={{ color: "var(--text-muted)", fontSize: 11, marginTop: 2 }}>
+                {w.authors.join(", ")}{w.year ? ` · ${w.year}` : ""}
               </div>
             )}
           </div>
         </div>
 
-        {/* Row 2: badges */}
-        <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: diffColor + "22", color: diffColor, fontWeight: "bold" }}>
-            {work.difficulty}
+        <div style={{ display: "flex", gap: 6, marginTop: 9, flexWrap: "wrap", alignItems: "center" }}>
+          <span style={{ fontSize: 10, padding: "2px 9px", borderRadius: 10, background: catColor + "20", color: catColor, fontWeight: "bold" }}>
+            {w.category}
           </span>
-          {typeLabel && (
-            <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: "var(--bg-secondary)", color: "var(--text-muted)" }}>
-              {typeLabel}
-            </span>
-          )}
-          <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: "var(--bg-secondary)", color: "var(--accent)", marginLeft: "auto" }}>
-            ⏱ {time}
+          <span style={{ fontSize: 10, padding: "2px 9px", borderRadius: 10, background: diffColor + "20", color: diffColor }}>
+            {w.difficulty}
           </span>
-        </div>
-
-        {/* Expand hint */}
-        <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 6, textAlign: "right" }}>
-          {expanded ? "▲ less" : "▼ more"}
+          <span style={{ fontSize: 12, color: "var(--accent)", marginLeft: "auto", fontFamily: "Georgia, serif", fontWeight: "bold" }}>
+            ⏱ {w.reading_time}
+          </span>
+          <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{open ? "▲" : "▼"}</span>
         </div>
       </div>
 
-      {expanded && (
-        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)", borderTop: "none", borderRadius: "0 0 8px 8px", padding: "12px 14px 14px" }}>
-          {work.plain_description && (
-            <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.7, margin: "0 0 8px" }}>
-              {work.plain_description}
+      {open && (
+        <div style={{
+          background: "var(--bg-secondary)",
+          border: "1px solid var(--border)",
+          borderTop: "none",
+          borderRadius: "0 0 8px 8px",
+          padding: "13px 14px 15px",
+        }}>
+          {w.why_essential && (
+            <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.7, margin: "0 0 9px" }}>
+              <strong style={{ color: "var(--text-primary)" }}>Why essential: </strong>{w.why_essential}
             </p>
           )}
-          {work.prerequisites && (
-            <div style={{ marginBottom: 6 }}>
-              <span style={{ color: "var(--text-muted)", fontSize: 11, fontWeight: "bold" }}>Before reading: </span>
-              <span style={{ color: "var(--text-secondary)", fontSize: 12 }}>{work.prerequisites}</span>
-            </div>
+          {w.what_you_gain && (
+            <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.7, margin: "0 0 9px" }}>
+              <strong style={{ color: "var(--accent)" }}>You gain: </strong>{w.what_you_gain}
+            </p>
           )}
-          {work.what_you_gain && (
-            <div style={{ marginBottom: 6 }}>
-              <span style={{ color: "var(--accent)", fontSize: 11, fontWeight: "bold" }}>What you gain: </span>
-              <span style={{ color: "var(--text-secondary)", fontSize: 12 }}>{work.what_you_gain}</span>
-            </div>
-          )}
-          {work.free_access && work.free_access !== "Not freely available" && (
-            <div style={{ fontSize: 11, color: "#4ade80", marginTop: 4 }}>🔓 {work.free_access}</div>
+          {w.prereqs && w.prereqs.toLowerCase() !== "none" && (
+            <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.7, margin: 0 }}>
+              <strong style={{ color: "var(--text-muted)" }}>Before reading: </strong>{w.prereqs}
+            </p>
           )}
         </div>
       )}
@@ -201,339 +197,353 @@ function WorkCard({ work, index }: { work: Work; index: number }) {
   );
 }
 
-// ── Main page ──────────────────────────────────────────────────────────────────
+// ── Streaming status indicator ─────────────────────────────────────────────────
 
-function MapPageInner() {
+function StreamDot({ status }: { status: Status }) {
+  if (status === "streaming") return <span style={{ color: "var(--accent)", fontSize: 11 }}>● generating…</span>;
+  if (status === "done") return <span style={{ color: "#4ade80", fontSize: 11 }}>✓</span>;
+  if (status === "error") return <span style={{ color: "#f87171", fontSize: 11 }}>✕ error</span>;
+  return null;
+}
+
+// ── Main ───────────────────────────────────────────────────────────────────────
+
+function MapInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [topics, setTopics] = useState<StudiedTopic[]>([]);
-  const [selectedSlug, setSelectedSlug] = useState<string>("");
-  const [loading, setLoading] = useState(true);
-  const [selectedConcept, setSelectedConcept] = useState<ConceptItem | null>(null);
-  const [addQuery, setAddQuery] = useState("");
-  const [diffFilter, setDiffFilter] = useState<"ALL" | "FOUNDATIONAL" | "INTERMEDIATE" | "ADVANCED">("ALL");
+  const slug = searchParams.get("topic") ?? "";
+  const label = searchParams.get("label") ?? slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+  const [query, setQuery] = useState("");
+  const [concepts, setConcepts] = useState<Concept[]>([]);
+  const [works, setWorks] = useState<MapWork[]>([]);
+  const [conceptStatus, setConceptStatus] = useState<Status>("idle");
+  const [workStatus, setWorkStatus] = useState<Status>("idle");
+  const [gen, setGen] = useState(0);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const conceptsKey = `concepts-list-v2:${slug}`;
+  const worksKey = `map-works:${slug}`;
 
   useEffect(() => {
-    const list = loadTopics();
-    setTopics(list);
-    const paramSlug = searchParams.get("topic");
-    if (paramSlug && list.find(t => t.slug === paramSlug)) {
-      setSelectedSlug(paramSlug);
-    } else if (list.length > 0) {
-      setSelectedSlug(list[0].slug);
+    if (!slug) return;
+
+    let conceptsCached = false;
+    let worksCached = false;
+
+    try {
+      const raw = localStorage.getItem(conceptsKey);
+      if (raw) {
+        const { data, ts } = JSON.parse(raw);
+        if (Date.now() - ts < TTL && Array.isArray(data) && data.length > 0) {
+          setConcepts(data);
+          setConceptStatus("done");
+          conceptsCached = true;
+        }
+      }
+    } catch { /**/ }
+
+    try {
+      const raw = localStorage.getItem(worksKey);
+      if (raw) {
+        const { data, ts } = JSON.parse(raw);
+        if (Date.now() - ts < TTL && Array.isArray(data) && data.length > 0) {
+          setWorks(data);
+          setWorkStatus("done");
+          worksCached = true;
+        }
+      }
+    } catch { /**/ }
+
+    if (conceptsCached && worksCached) return;
+
+    abortRef.current?.abort();
+    abortRef.current = new AbortController();
+    const { signal } = abortRef.current;
+
+    if (!conceptsCached) {
+      setConcepts([]);
+      setConceptStatus("streaming");
+      runConceptStream(slug, label, signal);
     }
-    setLoading(false);
-  }, [searchParams]);
+    if (!worksCached) {
+      setWorks([]);
+      setWorkStatus("streaming");
+      runWorkStream(label, signal);
+    }
 
-  function selectTopic(slug: string) {
-    setSelectedSlug(slug);
-    setSelectedConcept(null);
-    setDiffFilter("ALL");
-    router.replace(`/map?topic=${slug}`, { scroll: false });
+    return () => { abortRef.current?.abort(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slug, gen]);
+
+  async function runConceptStream(slug: string, label: string, signal: AbortSignal) {
+    const all: Concept[] = [];
+    try {
+      const res = await fetch("/api/concepts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ topic: label }),
+        signal,
+      });
+      if (!res.ok) { setConceptStatus("error"); return; }
+      const reader = res.body!.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value);
+        const [objs, rem] = extractObjects(buf);
+        buf = rem;
+        for (const obj of objs as Concept[]) {
+          if (obj.id && obj.name && obj.difficulty) {
+            all.push(obj);
+            setConcepts(prev => [...prev, obj]);
+          }
+        }
+      }
+      localStorage.setItem(conceptsKey, JSON.stringify({ data: all, ts: Date.now() }));
+      setConceptStatus("done");
+    } catch (e: unknown) {
+      if ((e as Error)?.name !== "AbortError") setConceptStatus("error");
+    }
   }
 
-  function addTopic(e: React.FormEvent) {
+  async function runWorkStream(label: string, signal: AbortSignal) {
+    const all: MapWork[] = [];
+    try {
+      const res = await fetch("/api/map-works", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ topic: label }),
+        signal,
+      });
+      if (!res.ok) { setWorkStatus("error"); return; }
+      const reader = res.body!.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value);
+        const [objs, rem] = extractObjects(buf);
+        buf = rem;
+        for (const obj of objs as MapWork[]) {
+          if (obj.title && obj.category && obj.difficulty) {
+            all.push(obj);
+            setWorks(prev =>
+              [...prev.filter(w => w.order !== obj.order), obj]
+                .sort((a, b) => (a.order ?? 99) - (b.order ?? 99))
+            );
+          }
+        }
+      }
+      localStorage.setItem(worksKey, JSON.stringify({ data: all, ts: Date.now() }));
+      setWorkStatus("done");
+    } catch (e: unknown) {
+      if ((e as Error)?.name !== "AbortError") setWorkStatus("error");
+    }
+  }
+
+  function regenerate() {
+    abortRef.current?.abort();
+    localStorage.removeItem(conceptsKey);
+    localStorage.removeItem(worksKey);
+    setConcepts([]);
+    setWorks([]);
+    setConceptStatus("idle");
+    setWorkStatus("idle");
+    setGen(g => g + 1);
+  }
+
+  function stop() {
+    abortRef.current?.abort();
+    if (conceptStatus === "streaming") setConceptStatus("done");
+    if (workStatus === "streaming") setWorkStatus("done");
+  }
+
+  function navigate(e: React.FormEvent) {
     e.preventDefault();
-    const q = addQuery.trim();
+    const q = query.trim();
     if (!q) return;
-    const slug = q.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-    router.push(`/topic/${slug}?label=${encodeURIComponent(q)}`);
+    const s = q.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+    router.push(`/map?topic=${s}&label=${encodeURIComponent(q)}`);
+    setQuery("");
   }
 
-  const topic = topics.find(t => t.slug === selectedSlug) ?? null;
+  const isStreaming = conceptStatus === "streaming" || workStatus === "streaming";
 
-  const essentialWorks = (topic?.works ?? [])
-    .filter(w => w._type === "essential")
-    .sort((a, b) => (DIFF_ORDER[a.difficulty ?? ""] ?? 0) - (DIFF_ORDER[b.difficulty ?? ""] ?? 0));
-
-  const antiWorks = (topic?.works ?? []).filter(w => w._type === "anti_library");
-
-  const workGroups = [
-    { label: "Phase 1 — Foundation", diff: "BEGINNER", color: "#4ade80" },
-    { label: "Phase 2 — Core", diff: "INTERMEDIATE", color: "#c9a84c" },
-    { label: "Phase 3 — Advanced", diff: "ADVANCED", color: "#f87171" },
+  const DIFF_GROUPS: { key: Concept["difficulty"]; color: string }[] = [
+    { key: "FOUNDATIONAL", color: "#4ade80" },
+    { key: "INTERMEDIATE", color: "#c9a84c" },
+    { key: "ADVANCED", color: "#f87171" },
   ];
-
-  const displayedConcepts = topic
-    ? (diffFilter === "ALL" ? topic.concepts : topic.concepts.filter(c => c.difficulty === diffFilter))
-    : [];
-
-  if (loading) {
-    return (
-      <div style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <span style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif" }}>Loading…</span>
-      </div>
-    );
-  }
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", flexDirection: "column" }}>
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
-      <header style={{ background: "var(--bg-secondary)", borderBottom: "1px solid var(--border)", padding: "14px 24px", display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+      <header style={{ background: "var(--bg-secondary)", borderBottom: "1px solid var(--border)", padding: "13px 24px", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
         <a href="/" style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif", fontSize: 13, textDecoration: "none", flexShrink: 0 }}>← Home</a>
+        <span style={{ color: "var(--accent)", fontFamily: "Georgia, serif", fontSize: 19, fontWeight: "bold", flexShrink: 0 }}>◈ Learning Map</span>
 
-        <h1 style={{ color: "var(--accent)", fontFamily: "Georgia, serif", fontSize: 20, margin: 0, flexShrink: 0 }}>◈ Learning Map</h1>
-
-        {/* Topic selector */}
-        {topics.length > 0 && (
-          <select
-            value={selectedSlug}
-            onChange={e => selectTopic(e.target.value)}
-            style={{
-              background: "var(--bg-card)", color: "var(--text-primary)", border: "1px solid var(--border)",
-              borderRadius: 8, padding: "7px 12px", fontFamily: "Georgia, serif", fontSize: 14,
-              flex: 1, maxWidth: 340, cursor: "pointer",
-            }}
-          >
-            {topics.map(t => (
-              <option key={t.slug} value={t.slug}>{t.label}</option>
-            ))}
-          </select>
-        )}
-
-        {/* Add / search topic */}
-        <form onSubmit={addTopic} style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+        <form onSubmit={navigate} style={{ display: "flex", gap: 6, flex: 1, maxWidth: 440 }}>
           <input
-            value={addQuery}
-            onChange={e => setAddQuery(e.target.value)}
-            placeholder="Add a topic…"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder={label || "Enter any topic…"}
             style={{
-              background: "var(--bg-card)", color: "var(--text-primary)", border: "1px solid var(--border)",
-              borderRadius: 8, padding: "7px 12px", fontFamily: "Georgia, serif", fontSize: 13, width: 180, outline: "none",
+              flex: 1, background: "var(--bg-card)", color: "var(--text-primary)",
+              border: "1px solid var(--border)", borderRadius: 8,
+              padding: "7px 12px", fontFamily: "Georgia, serif", fontSize: 13, outline: "none",
             }}
             onFocus={e => (e.target.style.borderColor = "var(--accent)")}
             onBlur={e => (e.target.style.borderColor = "var(--border)")}
           />
-          <button
-            type="submit"
-            disabled={!addQuery.trim()}
-            style={{
-              background: addQuery.trim() ? "var(--accent)" : "var(--bg-card)",
-              color: addQuery.trim() ? "#0d1117" : "var(--text-muted)",
-              border: "1px solid var(--border)", borderRadius: 8,
-              padding: "7px 16px", fontFamily: "Georgia, serif", fontSize: 13,
-              fontWeight: "bold", cursor: addQuery.trim() ? "pointer" : "default", flexShrink: 0,
-            }}
-          >
-            Explore →
+          <button type="submit" disabled={!query.trim()} style={{
+            background: query.trim() ? "var(--accent)" : "var(--bg-card)",
+            color: query.trim() ? "#0d1117" : "var(--text-muted)",
+            border: "1px solid var(--border)", borderRadius: 8, padding: "7px 16px",
+            fontFamily: "Georgia, serif", fontSize: 13, fontWeight: "bold",
+            cursor: query.trim() ? "pointer" : "default", flexShrink: 0,
+          }}>
+            Go →
           </button>
         </form>
 
-        <a href="/browse" style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif", fontSize: 13, textDecoration: "none", border: "1px solid var(--border)", borderRadius: 6, padding: "6px 12px", flexShrink: 0 }}
+        {slug && (isStreaming ? (
+          <button onClick={stop} style={{ background: "none", color: "var(--red)", border: "1px solid var(--red)", borderRadius: 8, padding: "6px 14px", fontFamily: "Georgia, serif", fontSize: 12, cursor: "pointer", flexShrink: 0 }}>
+            ■ Stop
+          </button>
+        ) : (
+          <button onClick={regenerate} style={{ background: "none", color: "var(--text-muted)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 14px", fontFamily: "Georgia, serif", fontSize: 12, cursor: "pointer", flexShrink: 0 }}
+            onMouseEnter={e => (e.currentTarget.style.borderColor = "var(--accent)")}
+            onMouseLeave={e => (e.currentTarget.style.borderColor = "var(--border)")}
+          >
+            ↺ Regenerate
+          </button>
+        ))}
+
+        <a href="/browse"
+          style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif", fontSize: 13, textDecoration: "none", border: "1px solid var(--border)", borderRadius: 6, padding: "6px 12px", flexShrink: 0 }}
           onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--accent)"; (e.currentTarget as HTMLElement).style.color = "var(--accent)"; }}
           onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--border)"; (e.currentTarget as HTMLElement).style.color = "var(--text-muted)"; }}
-        >
-          ◈ Browse Themes
-        </a>
+        >◈ Browse Themes</a>
       </header>
 
-      {/* ── Empty state ────────────────────────────────────────────────── */}
-      {topics.length === 0 && (
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: 40 }}>
-          <div style={{ fontSize: 48 }}>🗺️</div>
-          <h2 style={{ fontFamily: "Georgia, serif", color: "var(--accent)", fontSize: 22, margin: 0 }}>No topics studied yet</h2>
-          <p style={{ color: "var(--text-secondary)", textAlign: "center", maxWidth: 400, lineHeight: 1.7, margin: 0 }}>
-            Enter any academic topic to generate its concept map and reading list. Everything will appear here.
+      {/* ── No topic: landing ──────────────────────────────────────────── */}
+      {!slug && (
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20, padding: 40 }}>
+          <div style={{ fontSize: 52 }}>◈</div>
+          <h2 style={{ fontFamily: "Georgia, serif", color: "var(--accent)", fontSize: 24, margin: 0 }}>Master Any Topic</h2>
+          <p style={{ color: "var(--text-secondary)", textAlign: "center", maxWidth: 460, lineHeight: 1.8, margin: 0 }}>
+            Enter any subject to instantly generate its complete concept map and reading order — every concept you need to understand, every book and paper in the order to read them, with time estimates — all in one place.
           </p>
-          <form onSubmit={addTopic} style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          <form onSubmit={navigate} style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <input
-              value={addQuery}
-              onChange={e => setAddQuery(e.target.value)}
-              placeholder="e.g. Game Theory, Quantum Mechanics…"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder="e.g. Game Theory, Measure Theory, Evolutionary Biology…"
               style={{
-                background: "var(--bg-card)", color: "var(--text-primary)", border: "1px solid var(--border)",
-                borderRadius: 8, padding: "10px 16px", fontFamily: "Georgia, serif", fontSize: 14, width: 280, outline: "none",
+                background: "var(--bg-card)", color: "var(--text-primary)",
+                border: "1px solid var(--border)", borderRadius: 8,
+                padding: "13px 18px", fontFamily: "Georgia, serif", fontSize: 15, width: 360, outline: "none",
               }}
               onFocus={e => (e.target.style.borderColor = "var(--accent)")}
               onBlur={e => (e.target.style.borderColor = "var(--border)")}
               autoFocus
             />
-            <button type="submit" disabled={!addQuery.trim()} style={{ background: "var(--accent)", color: "#0d1117", border: "none", borderRadius: 8, padding: "10px 20px", fontFamily: "Georgia, serif", fontSize: 14, fontWeight: "bold", cursor: "pointer" }}>
-              Explore →
+            <button type="submit" disabled={!query.trim()} style={{
+              background: "var(--accent)", color: "#0d1117", border: "none", borderRadius: 8,
+              padding: "13px 24px", fontFamily: "Georgia, serif", fontSize: 15, fontWeight: "bold", cursor: "pointer",
+            }}>
+              Generate →
             </button>
           </form>
         </div>
       )}
 
-      {/* ── Main split view ────────────────────────────────────────────── */}
-      {topic && (
+      {/* ── Two-column streaming view ──────────────────────────────────── */}
+      {slug && (
         <div style={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}>
 
-          {/* LEFT: Concept graph */}
-          <div style={{ flex: "0 0 55%", display: "flex", flexDirection: "column", borderRight: "1px solid var(--border)", overflow: "hidden" }}>
-            {/* Panel header */}
-            <div style={{ padding: "12px 20px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 12, background: "var(--bg-secondary)", flexShrink: 0 }}>
-              <span style={{ color: "var(--accent)", fontFamily: "Georgia, serif", fontSize: 14, fontWeight: "bold" }}>
-                Concept Map
-              </span>
-              <span style={{ color: "var(--text-muted)", fontSize: 12 }}>
-                {topic.concepts.length} concepts
-              </span>
+          {/* LEFT: Concepts ─────────────────────────────────────────── */}
+          <div style={{ flex: "0 0 50%", display: "flex", flexDirection: "column", borderRight: "1px solid var(--border)", overflow: "hidden" }}>
 
-              {/* Difficulty filter */}
-              <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
-                {(["ALL", "FOUNDATIONAL", "INTERMEDIATE", "ADVANCED"] as const).map(d => (
-                  <button
-                    key={d}
-                    onClick={() => setDiffFilter(d)}
-                    style={{
-                      background: diffFilter === d ? (d === "FOUNDATIONAL" ? "#4ade80" : d === "INTERMEDIATE" ? "#c9a84c" : d === "ADVANCED" ? "#f87171" : "var(--accent)") : "var(--bg-card)",
-                      color: diffFilter === d ? "#0d1117" : "var(--text-muted)",
-                      border: "1px solid var(--border)", borderRadius: 6,
-                      padding: "3px 10px", fontSize: 11, cursor: "pointer",
-                      fontFamily: "Georgia, serif",
-                    }}
-                  >
-                    {d === "ALL" ? "All" : d === "FOUNDATIONAL" ? "Found." : d === "INTERMEDIATE" ? "Inter." : "Adv."}
-                  </button>
+            {/* Column header */}
+            <div style={{ padding: "10px 18px", borderBottom: "1px solid var(--border)", background: "var(--bg-secondary)", flexShrink: 0, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <span style={{ color: "var(--accent)", fontFamily: "Georgia, serif", fontSize: 14, fontWeight: "bold" }}>Concepts</span>
+                <span style={{ color: "var(--text-muted)", fontSize: 12 }}>{concepts.length} concepts</span>
+                <StreamDot status={conceptStatus} />
+              </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                {DIFF_GROUPS.map(g => (
+                  <div key={g.key} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <div style={{ width: 7, height: 7, borderRadius: "50%", background: g.color }} />
+                    <span style={{ fontSize: 9, color: "var(--text-muted)" }}>{g.key === "FOUNDATIONAL" ? "Found." : g.key === "INTERMEDIATE" ? "Inter." : "Adv."}</span>
+                  </div>
                 ))}
               </div>
             </div>
 
-            {/* Graph or placeholder */}
-            <div style={{ flex: 1, position: "relative" }}>
-              {topic.concepts.length === 0 ? (
-                <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: 32 }}>
-                  <div style={{ fontSize: 36 }}>◈</div>
-                  <div style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif", fontSize: 14, textAlign: "center", lineHeight: 1.7 }}>
-                    No concepts generated yet.
-                  </div>
-                  <a
-                    href={`/topic/${topic.slug}/concepts?label=${encodeURIComponent(topic.label)}`}
-                    style={{ color: "var(--accent)", fontFamily: "Georgia, serif", fontSize: 13, border: "1px solid var(--accent-dim)", borderRadius: 8, padding: "8px 18px", textDecoration: "none" }}
-                  >
-                    Generate Concept Map →
-                  </a>
-                </div>
-              ) : (
-                <ConceptGraph
-                  concepts={displayedConcepts}
-                  onSelect={c => setSelectedConcept(prev => prev?.id === c.id ? null : c)}
-                />
-              )}
-            </div>
-
-            {/* Selected concept detail */}
-            {selectedConcept && (
-              <div style={{
-                flexShrink: 0, borderTop: "1px solid var(--accent-dim)",
-                background: "#222940", padding: "14px 20px", maxHeight: 200, overflowY: "auto",
-              }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                  <div>
-                    <div style={{ color: "var(--accent)", fontFamily: "Georgia, serif", fontSize: 14, fontWeight: "bold" }}>{selectedConcept.name}</div>
-                    <div style={{ color: "var(--text-muted)", fontSize: 11, marginBottom: 6 }}>{selectedConcept.difficulty} · {selectedConcept.category}</div>
-                  </div>
-                  <button onClick={() => setSelectedConcept(null)} style={{ color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer", fontSize: 18 }}>×</button>
-                </div>
-                <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.65, margin: 0 }}>{selectedConcept.description}</p>
-                {selectedConcept.key_works && selectedConcept.key_works.length > 0 && (
-                  <div style={{ color: "var(--text-muted)", fontSize: 11, marginTop: 8 }}>📚 {selectedConcept.key_works.join(" · ")}</div>
-                )}
-                <a
-                  href={`/topic/${topic.slug}/concepts?label=${encodeURIComponent(topic.label)}`}
-                  style={{ display: "inline-block", marginTop: 10, fontSize: 12, color: "var(--accent)", textDecoration: "none", border: "1px solid var(--accent-dim)", borderRadius: 6, padding: "4px 10px" }}
-                >
-                  Deep dive →
-                </a>
-              </div>
-            )}
-          </div>
-
-          {/* RIGHT: Reading order */}
-          <div style={{ flex: "0 0 45%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            {/* Panel header */}
-            <div style={{ padding: "12px 20px", borderBottom: "1px solid var(--border)", background: "var(--bg-secondary)", flexShrink: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ color: "var(--accent)", fontFamily: "Georgia, serif", fontSize: 14, fontWeight: "bold" }}>
-                  Reading Order — Zero to Mastery
-                </span>
-                <span style={{ color: "var(--text-muted)", fontSize: 12 }}>
-                  {essentialWorks.length} works
-                </span>
-              </div>
-
-              {/* Timeline summary */}
-              {essentialWorks.length > 0 && (
-                <div style={{ display: "flex", gap: 12, marginTop: 8, flexWrap: "wrap" }}>
-                  {workGroups.map(g => {
-                    const t = phaseTime(topic.works, g.diff);
-                    const count = essentialWorks.filter(w => w.difficulty === g.diff).length;
-                    if (!t || count === 0) return null;
-                    return (
-                      <div key={g.diff} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <div style={{ width: 8, height: 8, borderRadius: "50%", background: g.color }} />
-                        <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{g.label.split("—")[1].trim()}: <span style={{ color: g.color }}>{t}</span></span>
-                      </div>
-                    );
-                  })}
+            {/* Concept cards by difficulty */}
+            <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px" }}>
+              {conceptStatus === "streaming" && concepts.length === 0 && (
+                <div style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif", fontSize: 13, textAlign: "center", paddingTop: 48 }}>
+                  Generating concepts…
                 </div>
               )}
-            </div>
-
-            {/* Works list */}
-            <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
-              {essentialWorks.length === 0 ? (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, paddingTop: 40 }}>
-                  <div style={{ fontSize: 32 }}>📚</div>
-                  <div style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif", fontSize: 14, textAlign: "center", lineHeight: 1.7 }}>
-                    No works generated yet.
-                  </div>
-                  <a
-                    href={`/topic/${topic.slug}/works?label=${encodeURIComponent(topic.label)}`}
-                    style={{ color: "var(--accent)", fontFamily: "Georgia, serif", fontSize: 13, border: "1px solid var(--accent-dim)", borderRadius: 8, padding: "8px 18px", textDecoration: "none" }}
-                  >
-                    Generate Works List →
-                  </a>
-                </div>
-              ) : (
-                <>
-                  {workGroups.map(g => {
-                    const group = essentialWorks.filter(w => w.difficulty === g.diff);
-                    if (group.length === 0) return null;
-                    const startIdx = essentialWorks.filter(w => (DIFF_ORDER[w.difficulty ?? ""] ?? 0) < (DIFF_ORDER[g.diff] ?? 0)).length;
-                    return (
-                      <div key={g.diff} style={{ marginBottom: 24 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                          <div style={{ height: 1, flex: 1, background: g.color + "40" }} />
-                          <span style={{ color: g.color, fontSize: 11, fontWeight: "bold", letterSpacing: 1.2, whiteSpace: "nowrap" }}>
-                            {g.label.toUpperCase()} · {phaseTime(topic.works, g.diff)}
-                          </span>
-                          <div style={{ height: 1, flex: 1, background: g.color + "40" }} />
-                        </div>
-                        {group.map((w, i) => (
-                          <WorkCard key={w.id ?? w.title} work={w} index={startIdx + i + 1} />
-                        ))}
-                      </div>
-                    );
-                  })}
-
-                  {antiWorks.length > 0 && (
-                    <div style={{ marginTop: 8 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                        <div style={{ height: 1, flex: 1, background: "var(--border)" }} />
-                        <span style={{ color: "var(--text-muted)", fontSize: 11, fontWeight: "bold", letterSpacing: 1.2, whiteSpace: "nowrap" }}>
-                          AVOID FOR NOW
-                        </span>
-                        <div style={{ height: 1, flex: 1, background: "var(--border)" }} />
-                      </div>
-                      {antiWorks.map(w => (
-                        <div key={w.title} style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 8, padding: "10px 14px", marginBottom: 8, opacity: 0.7 }}>
-                          <div style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif", fontSize: 13, fontWeight: "bold" }}>🚫 {w.title}</div>
-                          {(w as unknown as { reason?: string }).reason && (
-                            <div style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 4, lineHeight: 1.5 }}>
-                              {(w as unknown as { reason?: string }).reason}
-                            </div>
-                          )}
-                        </div>
-                      ))}
+              {DIFF_GROUPS.map(g => {
+                const group = concepts.filter(c => c.difficulty === g.key);
+                if (group.length === 0) return null;
+                return (
+                  <div key={g.key} style={{ marginBottom: 18 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
+                      <div style={{ height: 1, flex: 1, background: g.color + "35" }} />
+                      <span style={{ color: g.color, fontSize: 9, fontWeight: "bold", letterSpacing: 1.4, whiteSpace: "nowrap" }}>
+                        {g.key} ({group.length})
+                      </span>
+                      <div style={{ height: 1, flex: 1, background: g.color + "35" }} />
                     </div>
-                  )}
-                </>
-              )}
+                    {group.map(c => <ConceptCard key={c.id} c={c} />)}
+                  </div>
+                );
+              })}
             </div>
           </div>
+
+          {/* RIGHT: Reading order ────────────────────────────────────── */}
+          <div style={{ flex: "0 0 50%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+
+            {/* Column header */}
+            <div style={{ padding: "10px 18px", borderBottom: "1px solid var(--border)", background: "var(--bg-secondary)", flexShrink: 0, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <span style={{ color: "var(--accent)", fontFamily: "Georgia, serif", fontSize: 14, fontWeight: "bold" }}>Reading Order — Zero to Mastery</span>
+                <span style={{ color: "var(--text-muted)", fontSize: 12 }}>{works.length} works</span>
+                <StreamDot status={workStatus} />
+              </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                {[["#60a5fa", "Pedagogical"], ["#a78bfa", "Seminal"], ["#fb923c", "Breakthrough"]].map(([color, lbl]) => (
+                  <div key={lbl} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <div style={{ width: 7, height: 7, borderRadius: "50%", background: color }} />
+                    <span style={{ fontSize: 9, color: "var(--text-muted)" }}>{lbl}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Work cards */}
+            <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px" }}>
+              {workStatus === "streaming" && works.length === 0 && (
+                <div style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif", fontSize: 13, textAlign: "center", paddingTop: 48 }}>
+                  Generating reading list…
+                </div>
+              )}
+              {works.map(w => <WorkCard key={`${w.order}:${w.title}`} w={w} />)}
+            </div>
+          </div>
+
         </div>
       )}
     </div>
@@ -542,8 +552,12 @@ function MapPageInner() {
 
 export default function MapPage() {
   return (
-    <Suspense fallback={<div style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif" }}>Loading…</span></div>}>
-      <MapPageInner />
+    <Suspense fallback={
+      <div style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <span style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif" }}>Loading…</span>
+      </div>
+    }>
+      <MapInner />
     </Suspense>
   );
 }

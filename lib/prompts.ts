@@ -1,3 +1,25 @@
+export function mapWorksPrompt(topic: string) {
+  return `Generate the complete reading list for mastering "${topic}" from absolute zero to the research frontier.
+
+Categorize every work as exactly one of:
+- PEDAGOGICAL: Written to teach — clearest explanations, best for building understanding, textbooks and accessible introductions
+- SEMINAL: Foundational originals — the works that defined or founded the field, historically essential
+- BREAKTHROUGH: Paradigm-shifting — works that fundamentally changed how the field thinks
+
+Output each work as ONE JSON object per line (NDJSON):
+{"order":1,"category":"PEDAGOGICAL","title":"Full Title","authors":["Author Name"],"year":2010,"difficulty":"BEGINNER","reading_time":"2-4 months","why_essential":"Why this specific work is indispensable — 1-2 sharp sentences.","what_you_gain":"What you can understand or do after reading this.","prereqs":"What to know before starting — be specific, or write None."}
+
+Rules:
+- Output in OPTIMAL READING ORDER starting from 1 — not alphabetical, not by category
+- Beginner pedagogical works come before seminal originals covering the same material
+- difficulty must be exactly: BEGINNER | INTERMEDIATE | ADVANCED
+- reading_time must be concrete and specific: "4-6 hours", "1-2 weeks", "2-4 months", "5-7 months"
+- Aim for 15-25 works covering zero to mastery
+- No array brackets, no commas between objects, no markdown, no explanation text
+
+Topic: ${topic}`;
+}
+
 export function tutorSystemPrompt(topic: string, conceptNames: string[]): string {
   const concepts = conceptNames.length > 0
     ? `\nCore concepts in this topic: ${conceptNames.slice(0, 25).join(", ")}.`
