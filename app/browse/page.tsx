@@ -7,6 +7,7 @@ interface Theme {
   id: string;
   name: string;
   description: string;
+  specialization?: string;
   domain?: string;
   field?: string;
 }
@@ -14,7 +15,7 @@ interface Theme {
 const CACHE_TTL = 14 * 24 * 60 * 60 * 1000;
 
 function cacheKey(domain: string, field: string) {
-  return `themes-v1:${domain}:${field}`;
+  return `themes-v2:${domain}:${field}`;
 }
 
 function loadCached(domain: string, field: string): Theme[] | null {
@@ -207,14 +208,40 @@ function ThemePanel({ domain, field }: { domain: string; field: string }) {
               </span>
             </div>
           )}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
-            {themes.map((t, i) => (
-              <ThemeCard key={t.id} theme={t} index={i} onClick={() => goToTopic(t)} />
-            ))}
-          </div>
+
+          {/* Group by specialization */}
+          {(() => {
+            const groups: Record<string, Theme[]> = {};
+            const order: string[] = [];
+            for (const t of themes) {
+              const spec = t.specialization || "General";
+              if (!groups[spec]) { groups[spec] = []; order.push(spec); }
+              groups[spec].push(t);
+            }
+            let globalIndex = 0;
+            return order.map(spec => (
+              <div key={spec} style={{ marginBottom: 40 }}>
+                {/* Specialization header */}
+                <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 20 }}>
+                  <div style={{ fontSize: 11, color: "var(--accent)", letterSpacing: "0.12em", textTransform: "uppercase", fontFamily: "Georgia, serif", fontWeight: "bold", whiteSpace: "nowrap" }}>
+                    {spec}
+                  </div>
+                  <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{groups[spec].length} themes</div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
+                  {groups[spec].map(t => {
+                    const idx = globalIndex++;
+                    return <ThemeCard key={t.id} theme={t} index={idx} onClick={() => goToTopic(t)} />;
+                  })}
+                </div>
+              </div>
+            ));
+          })()}
+
           {done && (
-            <div style={{ marginTop: 16, fontSize: 12, color: "var(--text-muted)", fontFamily: "Georgia, serif" }}>
-              {themes.length} themes · Click any to generate a full mastery guide
+            <div style={{ marginTop: 8, fontSize: 12, color: "var(--text-muted)", fontFamily: "Georgia, serif" }}>
+              {themes.length} themes across {new Set(themes.map(t => t.specialization || "General")).size} specialisations · Click any to generate a full mastery guide
             </div>
           )}
         </>

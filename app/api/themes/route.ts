@@ -10,7 +10,7 @@ export async function POST(req: Request) {
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        await streamToController(themesPrompt(domain, field), controller, BEGINNER_SYSTEM, 4000);
+        await streamToController(themesPrompt(domain, field), controller, BEGINNER_SYSTEM, 8000);
       } catch (err) {
         controller.error(err);
       }

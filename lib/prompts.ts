@@ -1,19 +1,21 @@
 export function themesPrompt(domain: string, field: string) {
-  return `Generate 10-12 major themes for the field of "${field}" (within the domain of "${domain}").
+  return `Generate a comprehensive set of themes for the field of "${field}" (within "${domain}"), organised by specialisation.
 
-A theme is a central idea, tension, or underlying question that defines the intellectual character of the field — NOT a sub-discipline or named subtopic.
+First, identify the 5-8 major specialisations within ${field}. For each specialisation, generate 4-6 themes.
 
-Good examples from Mathematics: "The Nature of Infinity", "Proof & Mathematical Rigor", "The Unreasonable Effectiveness of Mathematics"
-Bad examples (these are sub-disciplines, not themes): "Algebra", "Calculus", "Topology"
+A theme is a central idea, underlying question, or intellectual tension — NOT a sub-discipline name or course title.
+Good theme examples from Mathematics: "The Nature of Infinity", "Why Proof Matters", "When Equations Have No Solution"
+Bad examples (these are specialisation names, not themes): "Algebra", "Calculus", "Topology"
 
-For each theme, output ONE JSON object on its own line:
-{"id":"kebab-case-slug","name":"Theme Name (3-7 words)","description":"2-3 plain-English sentences. What is the central question or tension? Why does it matter? No jargon without explanation."}
+Output each theme as ONE JSON object per line (NDJSON):
+{"id":"kebab-case-slug","name":"Theme Name (4-8 words)","description":"2-3 plain-English sentences for a curious non-expert. What is the central idea or tension? Why does it matter? Give a concrete example if possible.","specialization":"Name of the specialisation this theme belongs to"}
 
 Rules:
-- NDJSON format: one complete JSON object per line, no array brackets, no commas between objects
-- Themes must be diverse and cover the full intellectual range of ${field}
-- Descriptions are for a curious non-expert — simple, vivid, concrete
-- Names should feel like big ideas, not course catalogue entries
+- NDJSON: one complete object per line, no array brackets, no commas between objects
+- Output all themes for one specialisation before moving to the next
+- Descriptions must be vivid, jargon-free, and concrete — no academic hedging
+- Aim for ~35-45 themes total across all specialisations
+- Cover the full intellectual range of ${field} — foundational and frontier
 
 Domain: ${domain}
 Field: ${field}`;
