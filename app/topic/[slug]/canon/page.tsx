@@ -1,10 +1,6 @@
 "use client";
-import { Suspense, useEffect, useRef, useState, useCallback } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
-import dynamic from "next/dynamic";
-import type { CanonConceptNode } from "@/components/CanonConceptGraph";
-
-const CanonConceptGraph = dynamic(() => import("@/components/CanonConceptGraph"), { ssr: false });
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -42,7 +38,7 @@ interface CanonWork {
   authors: string[];
   year: number;
   category: "PEDAGOGICAL" | "SEMINAL" | "BREAKTHROUGH";
-  difficulty: "BEGINNER" | "INTERMEDIATE" | "ADVANCED";
+  difficulty: string;
   reading_time: string;
   concept_ids: string[];
   why_essential: string;
@@ -58,7 +54,7 @@ interface CanonEvent {
   title: string;
   description: string;
   significance: string;
-  event_type: "DISCOVERY" | "PUBLICATION" | "PARADIGM_SHIFT" | "APPLICATION" | "CONTROVERSY";
+  event_type: string;
   figure_id?: string;
   concept_id?: string;
   work_id?: string;
@@ -83,8 +79,10 @@ interface CanonStage {
   prerequisites: string[];
 }
 
-type Layer = "concepts" | "timeline" | "figures" | "reading";
-type SelType = "concept" | "work" | "figure" | "event" | null;
+type RenderGroup =
+  | { type: "seq"; stage: CanonStage }
+  | { type: "par"; tracks: { name: string | null; stages: CanonStage[] }[] };
+
 type Status = "idle" | "streaming" | "done" | "error";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -95,10 +93,10 @@ const DIFF_COLOR: Record<string, string> = {
   ADVANCED:     "#f87171",
 };
 
-const CAT_COLOR: Record<string, { color: string; bg: string }> = {
-  PEDAGOGICAL:  { color: "#60a5fa", bg: "#60a5fa18" },
-  SEMINAL:      { color: "#a78bfa", bg: "#a78bfa18" },
-  BREAKTHROUGH: { color: "#fb923c", bg: "#fb923c18" },
+const CAT: Record<string, { color: string; bg: string }> = {
+  PEDAGOGICAL:  { color: "#60a5fa", bg: "#60a5fa14" },
+  SEMINAL:      { color: "#a78bfa", bg: "#a78bfa14" },
+  BREAKTHROUGH: { color: "#fb923c", bg: "#fb923c14" },
 };
 
 const EVENT_COLOR: Record<string, string> = {
@@ -117,14 +115,7 @@ const LEVEL_COLOR: Record<string, string> = {
   RESEARCH:       "#fb923c",
 };
 
-const LAYERS: { id: Layer; label: string }[] = [
-  { id: "concepts",  label: "◈ Concepts" },
-  { id: "timeline",  label: "🕰 Timeline" },
-  { id: "figures",   label: "🏛 Figures" },
-  { id: "reading",   label: "🗺 Reading Path" },
-];
-
-// ── NDJSON extractor ──────────────────────────────────────────────────────────
+// ── NDJSON extractor ───────────────────────────────────────────────────────────
 
 function extractObjects(buf: string): [unknown[], string] {
   const out: unknown[] = [];
@@ -154,352 +145,10 @@ function extractObjects(buf: string): [unknown[], string] {
   return [out, buf.slice(i)];
 }
 
-// ── Chip ──────────────────────────────────────────────────────────────────────
+// ── Group stages into render groups ───────────────────────────────────────────
 
-function Chip({ label, color, onClick }: { label: string; color: string; onClick?: () => void }) {
-  return (
-    <span
-      onClick={onClick}
-      style={{
-        fontSize: 10, padding: "2px 8px", borderRadius: 10,
-        background: color + "20", color, border: `1px solid ${color}40`,
-        cursor: onClick ? "pointer" : "default",
-        fontFamily: "Georgia, serif", whiteSpace: "nowrap",
-      }}
-    >
-      {label}
-    </span>
-  );
-}
-
-// ── Detail Panel ──────────────────────────────────────────────────────────────
-
-function DetailPanel({
-  selType, selId,
-  concepts, works, figures, events,
-  topic, label,
-  onSelectConcept, onSelectWork, onSelectFigure,
-  onClose,
-}: {
-  selType: SelType; selId: string | null;
-  concepts: CanonConcept[]; works: CanonWork[]; figures: CanonFigure[]; events: CanonEvent[];
-  topic: string; label: string;
-  onSelectConcept: (id: string) => void;
-  onSelectWork: (id: string) => void;
-  onSelectFigure: (id: string) => void;
-  onClose: () => void;
-}) {
-  const [chapters, setChapters] = useState<string>("");
-  const [chaptersLoading, setChaptersLoading] = useState(false);
-  const [chaptersOpen, setChaptersOpen] = useState(false);
-  const chapterAbort = useRef<AbortController | null>(null);
-
-  const concept = selType === "concept" ? concepts.find(c => c.id === selId) : null;
-  const work    = selType === "work"    ? works.find(w => w.id === selId)    : null;
-  const figure  = selType === "figure"  ? figures.find(f => f.id === selId)  : null;
-  const event   = selType === "event"   ? events.find(e => e.id === selId)   : null;
-
-  // Reset chapters when selection changes
-  useEffect(() => {
-    setChapters(""); setChaptersOpen(false); setChaptersLoading(false);
-    chapterAbort.current?.abort();
-  }, [selId]);
-
-  async function loadChapters(w: CanonWork) {
-    if (chapters || chaptersLoading) { setChaptersOpen(true); return; }
-    chapterAbort.current?.abort();
-    chapterAbort.current = new AbortController();
-    setChaptersLoading(true); setChaptersOpen(true);
-    try {
-      const res = await fetch("/api/work", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic: label, title: w.title, authors: w.authors.join(", "), type: w.category }),
-        signal: chapterAbort.current.signal,
-      });
-      if (!res.ok) { setChaptersLoading(false); return; }
-      const reader = res.body!.getReader();
-      const dec = new TextDecoder();
-      let text = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        text += dec.decode(value);
-        setChapters(text);
-      }
-    } catch { /**/ }
-    setChaptersLoading(false);
-  }
-
-  if (!selType || !selId) return null;
-
-  const panelStyle: React.CSSProperties = {
-    width: 340, flexShrink: 0,
-    background: "var(--bg-secondary)",
-    borderLeft: "1px solid var(--border)",
-    display: "flex", flexDirection: "column",
-    overflowY: "auto", position: "relative",
-  };
-
-  const hdr = (title: string, sub?: string, badge?: { label: string; color: string }) => (
-    <div style={{ padding: "16px 16px 12px", borderBottom: "1px solid var(--border-subtle)" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-        <div style={{ flex: 1 }}>
-          {badge && (
-            <span style={{ fontSize: 9, padding: "2px 8px", borderRadius: 8, background: badge.color + "20", color: badge.color, fontWeight: "bold", letterSpacing: 0.5, display: "inline-block", marginBottom: 6 }}>
-              {badge.label}
-            </span>
-          )}
-          <div style={{ color: "var(--text-primary)", fontFamily: "Georgia, serif", fontSize: 15, fontWeight: "bold", lineHeight: 1.3 }}>{title}</div>
-          {sub && <div style={{ color: "var(--text-muted)", fontSize: 11, marginTop: 3 }}>{sub}</div>}
-        </div>
-        <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: 18, cursor: "pointer", lineHeight: 1, flexShrink: 0 }}>×</button>
-      </div>
-    </div>
-  );
-
-  const section = (label: string, children: React.ReactNode) => (
-    <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--border-subtle)" }}>
-      <div style={{ fontSize: 9, color: "var(--text-muted)", fontWeight: "bold", letterSpacing: 1, marginBottom: 6 }}>{label}</div>
-      {children}
-    </div>
-  );
-
-  const chipRow = (items: { label: string; color: string; onClick?: () => void }[]) => (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-      {items.map(i => <Chip key={i.label} {...i} />)}
-    </div>
-  );
-
-  // ── Concept panel ────────────────────────────────────────────────────
-  if (concept) {
-    const diffColor = DIFF_COLOR[concept.difficulty] ?? "#c9a84c";
-    const linkedFigures = figures.filter(f => concept.figure_ids?.includes(f.id));
-    const linkedWorks   = works.filter(w => concept.work_ids?.includes(w.id));
-    const unlockedConcepts = concepts.filter(c => concept.unlocks?.includes(c.id));
-    const prereqConcepts   = concepts.filter(c => concept.prerequisites?.includes(c.id));
-
-    return (
-      <div style={panelStyle}>
-        {hdr(concept.name, concept.category, { label: concept.difficulty, color: diffColor })}
-        {section("EXPLANATION", <p style={{ color: "var(--text-secondary)", fontSize: 12, lineHeight: 1.75, margin: 0 }}>{concept.description}</p>)}
-        {concept.analogy && section("ANALOGY", <p style={{ color: "var(--accent)", fontFamily: "Georgia, serif", fontSize: 12, lineHeight: 1.65, fontStyle: "italic", margin: 0 }}>"{concept.analogy}"</p>)}
-        {prereqConcepts.length > 0 && section("REQUIRES FIRST", chipRow(prereqConcepts.map(c => ({ label: c.name, color: DIFF_COLOR[c.difficulty], onClick: () => onSelectConcept(c.id) }))))}
-        {unlockedConcepts.length > 0 && section("UNLOCKS", chipRow(unlockedConcepts.map(c => ({ label: c.name, color: DIFF_COLOR[c.difficulty], onClick: () => onSelectConcept(c.id) }))))}
-        {linkedFigures.length > 0 && section("DISCOVERED BY", chipRow(linkedFigures.map(f => ({ label: f.name, color: "#c9a84c", onClick: () => onSelectFigure(f.id) }))))}
-        {linkedWorks.length > 0 && section("READ IN", (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {linkedWorks.map(w => {
-              const wc = CAT_COLOR[w.category] ?? CAT_COLOR.PEDAGOGICAL;
-              return (
-                <div key={w.id} onClick={() => onSelectWork(w.id)} style={{ cursor: "pointer", padding: "6px 8px", borderRadius: 6, background: wc.bg, border: `1px solid ${wc.color}30` }}>
-                  <div style={{ color: wc.color, fontSize: 10, fontWeight: "bold", marginBottom: 2 }}>{w.category} · {w.reading_time}</div>
-                  <div style={{ color: "var(--text-primary)", fontFamily: "Georgia, serif", fontSize: 12 }}>📚 {w.title}</div>
-                  <div style={{ color: "var(--text-muted)", fontSize: 10, marginTop: 1 }}>{w.authors.join(", ")}</div>
-                </div>
-              );
-            })}
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  // ── Work panel ───────────────────────────────────────────────────────
-  if (work) {
-    const wc = CAT_COLOR[work.category] ?? CAT_COLOR.PEDAGOGICAL;
-    const linkedConcepts = concepts.filter(c => work.concept_ids?.includes(c.id));
-
-    return (
-      <div style={panelStyle}>
-        {hdr(`📚 ${work.title}`, `${work.authors.join(", ")} · ${work.year}`, { label: work.category, color: wc.color })}
-        {section("DETAILS", (
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Chip label={work.difficulty} color={DIFF_COLOR[work.difficulty === "BEGINNER" ? "FOUNDATIONAL" : work.difficulty] ?? "#c9a84c"} />
-            <Chip label={`⏱ ${work.reading_time}`} color="#6b7280" />
-          </div>
-        ))}
-        {section("WHY ESSENTIAL", <p style={{ color: "var(--text-secondary)", fontSize: 12, lineHeight: 1.7, margin: 0 }}>{work.why_essential}</p>)}
-        {section("WHAT YOU GAIN", <p style={{ color: "var(--text-secondary)", fontSize: 12, lineHeight: 1.7, margin: 0 }}>{work.what_you_gain}</p>)}
-        {work.prereqs && section("PREREQUISITES", <p style={{ color: "var(--text-muted)", fontSize: 12, lineHeight: 1.6, margin: 0 }}>{work.prereqs}</p>)}
-        {linkedConcepts.length > 0 && section("CONCEPTS COVERED", chipRow(linkedConcepts.map(c => ({ label: c.name, color: DIFF_COLOR[c.difficulty], onClick: () => onSelectConcept(c.id) }))))}
-        <div style={{ padding: "10px 16px" }}>
-          <button
-            onClick={() => loadChapters(work)}
-            style={{ width: "100%", padding: "8px", background: chaptersOpen ? "var(--bg-card)" : wc.bg, border: `1px solid ${wc.color}50`, borderRadius: 6, color: wc.color, fontFamily: "Georgia, serif", fontSize: 12, cursor: "pointer" }}
-          >
-            {chaptersLoading ? "Loading chapters…" : chaptersOpen ? "▲ Hide chapters" : "▼ Load chapter breakdown"}
-          </button>
-          {chaptersOpen && chapters && (
-            <div style={{ marginTop: 8, color: "var(--text-secondary)", fontSize: 11, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
-              {chapters}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // ── Figure panel ─────────────────────────────────────────────────────
-  if (figure) {
-    const theirConcepts = concepts.filter(c => figure.concept_ids?.includes(c.id));
-    const theirWorks    = works.filter(w => figure.work_ids?.includes(w.id));
-    const influencedBy  = figures.filter(f => figure.influenced_by?.includes(f.id));
-    const theyInfluenced = figures.filter(f => figure.influenced?.includes(f.id));
-
-    return (
-      <div style={panelStyle}>
-        {hdr(figure.name, figure.years)}
-        {section("CONTRIBUTION", <p style={{ color: "var(--text-secondary)", fontSize: 12, lineHeight: 1.75, margin: 0 }}>{figure.contribution}</p>)}
-        {figure.surprising_fact && section("SURPRISING FACT", <p style={{ color: "var(--accent)", fontFamily: "Georgia, serif", fontSize: 12, lineHeight: 1.65, fontStyle: "italic", margin: 0 }}>"{figure.surprising_fact}"</p>)}
-        {theirConcepts.length > 0 && section("THEIR CONCEPTS", chipRow(theirConcepts.map(c => ({ label: c.name, color: DIFF_COLOR[c.difficulty], onClick: () => onSelectConcept(c.id) }))))}
-        {theirWorks.length > 0 && section("THEIR WORKS", chipRow(theirWorks.map(w => ({ label: w.title, color: CAT_COLOR[w.category]?.color ?? "#60a5fa", onClick: () => onSelectWork(w.id) }))))}
-        {influencedBy.length > 0 && section("INFLUENCED BY", chipRow(influencedBy.map(f => ({ label: f.name, color: "#6b7280", onClick: () => onSelectFigure(f.id) }))))}
-        {theyInfluenced.length > 0 && section("THEY INFLUENCED", chipRow(theyInfluenced.map(f => ({ label: f.name, color: "#c9a84c", onClick: () => onSelectFigure(f.id) }))))}
-      </div>
-    );
-  }
-
-  // ── Event panel ──────────────────────────────────────────────────────
-  if (event) {
-    const evColor = EVENT_COLOR[event.event_type] ?? "#c9a84c";
-    const relFigure  = event.figure_id  ? figures.find(f => f.id === event.figure_id)  : null;
-    const relConcept = event.concept_id ? concepts.find(c => c.id === event.concept_id) : null;
-    const relWork    = event.work_id    ? works.find(w => w.id === event.work_id)       : null;
-
-    return (
-      <div style={panelStyle}>
-        {hdr(event.title, `${event.year} · ${event.era}`, { label: event.event_type.replace("_", " "), color: evColor })}
-        {section("WHAT HAPPENED", <p style={{ color: "var(--text-secondary)", fontSize: 12, lineHeight: 1.75, margin: 0 }}>{event.description}</p>)}
-        {section("SIGNIFICANCE", <p style={{ color: "var(--text-secondary)", fontSize: 12, lineHeight: 1.7, margin: 0 }}>{event.significance}</p>)}
-        {(relFigure || relConcept || relWork) && section("CONNECTED TO", (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-            {relFigure  && <Chip label={`👤 ${relFigure.name}`}   color="#c9a84c" onClick={() => onSelectFigure(relFigure.id)} />}
-            {relConcept && <Chip label={`◈ ${relConcept.name}`}  color={DIFF_COLOR[relConcept.difficulty]} onClick={() => onSelectConcept(relConcept.id)} />}
-            {relWork    && <Chip label={`📚 ${relWork.title}`}    color="#60a5fa" onClick={() => onSelectWork(relWork.id)} />}
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  return null;
-}
-
-// ── Timeline layer ────────────────────────────────────────────────────────────
-
-function TimelineLayer({ events, selectedId, onSelect }: {
-  events: CanonEvent[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-}) {
-  const sorted = [...events].sort((a, b) => a.year - b.year);
-  const eras = new Map<string, CanonEvent[]>();
-  sorted.forEach(e => {
-    if (!eras.has(e.era)) eras.set(e.era, []);
-    eras.get(e.era)!.push(e);
-  });
-
-  return (
-    <div style={{ overflowY: "auto", height: "100%", padding: "16px 20px" }}>
-      {[...eras.entries()].map(([era, evs]) => (
-        <div key={era} style={{ marginBottom: 32 }}>
-          <div style={{ fontSize: 10, color: "var(--text-muted)", fontWeight: "bold", letterSpacing: 2, marginBottom: 12, borderBottom: "1px solid var(--border-subtle)", paddingBottom: 6 }}>
-            {era.toUpperCase()}
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {evs.map(ev => {
-              const color = EVENT_COLOR[ev.event_type] ?? "#c9a84c";
-              const isSelected = ev.id === selectedId;
-              return (
-                <div
-                  key={ev.id}
-                  onClick={() => onSelect(ev.id)}
-                  style={{
-                    display: "flex", gap: 14, alignItems: "flex-start", cursor: "pointer",
-                    padding: "10px 12px", borderRadius: 8,
-                    background: isSelected ? "var(--bg-secondary)" : "var(--bg-card)",
-                    border: `1px solid ${isSelected ? color : "var(--border)"}`,
-                    transition: "border-color 0.15s",
-                  }}
-                >
-                  <div style={{ flexShrink: 0, textAlign: "center" }}>
-                    <div style={{ color, fontFamily: "Georgia, serif", fontSize: 13, fontWeight: "bold" }}>{ev.year}</div>
-                    <div style={{ fontSize: 8, color, background: color + "18", padding: "1px 5px", borderRadius: 6, marginTop: 3, whiteSpace: "nowrap" }}>
-                      {ev.event_type.replace("_", " ")}
-                    </div>
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ color: "var(--text-primary)", fontFamily: "Georgia, serif", fontSize: 13, fontWeight: "bold", marginBottom: 3 }}>{ev.title}</div>
-                    <div style={{ color: "var(--text-secondary)", fontSize: 11, lineHeight: 1.6 }}>{ev.description}</div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ── Figures layer ─────────────────────────────────────────────────────────────
-
-function FiguresLayer({ figures, concepts, selectedId, onSelect }: {
-  figures: CanonFigure[];
-  concepts: CanonConcept[];
-  selectedId: string | null;
-  onSelect: (id: string) => void;
-}) {
-  return (
-    <div style={{ overflowY: "auto", height: "100%", padding: "16px 20px" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
-        {figures.map(fig => {
-          const isSelected = fig.id === selectedId;
-          const theirConcepts = concepts.filter(c => fig.concept_ids?.includes(c.id));
-          return (
-            <div
-              key={fig.id}
-              onClick={() => onSelect(fig.id)}
-              style={{
-                padding: "14px 16px", borderRadius: 10, cursor: "pointer",
-                background: isSelected ? "var(--bg-secondary)" : "var(--bg-card)",
-                border: `1px solid ${isSelected ? "var(--accent)" : "var(--border)"}`,
-                boxShadow: isSelected ? "0 0 12px rgba(201,168,76,0.2)" : "none",
-                transition: "border-color 0.15s, box-shadow 0.15s",
-              }}
-            >
-              <div style={{ color: "var(--accent)", fontFamily: "Georgia, serif", fontSize: 14, fontWeight: "bold", marginBottom: 2 }}>{fig.name}</div>
-              <div style={{ color: "var(--text-muted)", fontSize: 11, marginBottom: 8 }}>{fig.years}</div>
-              <div style={{ color: "var(--text-secondary)", fontSize: 11, lineHeight: 1.6, marginBottom: 10 }}>
-                {fig.contribution.slice(0, 120)}{fig.contribution.length > 120 ? "…" : ""}
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                {theirConcepts.slice(0, 4).map(c => (
-                  <span key={c.id} style={{ fontSize: 9, padding: "2px 7px", borderRadius: 8, background: DIFF_COLOR[c.difficulty] + "18", color: DIFF_COLOR[c.difficulty] }}>
-                    {c.name}
-                  </span>
-                ))}
-                {theirConcepts.length > 4 && <span style={{ fontSize: 9, color: "var(--text-muted)" }}>+{theirConcepts.length - 4} more</span>}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ── Reading layer ─────────────────────────────────────────────────────────────
-
-function ReadingLayer({ stages, concepts, onSelectConcept, onSelectWork }: {
-  stages: CanonStage[];
-  concepts: CanonConcept[];
-  onSelectConcept: (id: string) => void;
-  onSelectWork: (id: string) => void;
-}) {
-  // Group into sequential vs. parallel blocks
-  const groups: ({ type: "seq"; stage: CanonStage } | { type: "par"; stages: CanonStage[] })[] = [];
+function groupStages(stages: CanonStage[]): RenderGroup[] {
+  const groups: RenderGroup[] = [];
   let i = 0;
   while (i < stages.length) {
     const s = stages[i];
@@ -508,109 +157,396 @@ function ReadingLayer({ stages, concepts, onSelectConcept, onSelectWork }: {
       i++;
     } else {
       const pg = s.parallel_group;
-      const grp: CanonStage[] = [];
-      while (i < stages.length && stages[i].parallel_group === pg) { grp.push(stages[i]); i++; }
-      // sub-group by track
+      const pgStages: CanonStage[] = [];
+      while (i < stages.length && stages[i].parallel_group === pg) { pgStages.push(stages[i]); i++; }
       const trackMap = new Map<string, CanonStage[]>();
-      grp.forEach(st => {
+      pgStages.forEach(st => {
         const k = st.track ?? "__";
         if (!trackMap.has(k)) trackMap.set(k, []);
         trackMap.get(k)!.push(st);
       });
       trackMap.forEach(v => v.sort((a, b) => (a.track_position ?? 0) - (b.track_position ?? 0)));
-      groups.push({ type: "par", stages: [...trackMap.values()].flat() });
+      const tracks = [...trackMap.entries()].map(([name, sts]) => ({ name: name === "__" ? null : name, stages: sts }));
+      groups.push({ type: "par", tracks });
     }
   }
+  return groups;
+}
 
-  const levelColor = (level: string) => LEVEL_COLOR[level] ?? "#c9a84c";
-  const catColor = (cat: string | null) => CAT_COLOR[cat ?? ""]?.color ?? "var(--accent)";
+// ── Concept card ───────────────────────────────────────────────────────────────
 
-  function StageCard({ stage }: { stage: CanonStage }) {
-    const lc = levelColor(stage.level);
-    const wc = catColor(stage.work_category);
-    const stageConcepts = concepts.filter(c => stage.concept_ids?.includes(c.id));
+function ConceptCard({
+  concept, linkedFigures, linkedWorks, linkedEvent, isParallel,
+}: {
+  concept: CanonConcept;
+  linkedFigures: CanonFigure[];
+  linkedWorks: CanonWork[];
+  linkedEvent: CanonEvent | null;
+  isParallel?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const dc = DIFF_COLOR[concept.difficulty] ?? "#c9a84c";
 
-    return (
-      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderLeft: `4px solid ${lc}`, borderRadius: 8, padding: "10px 12px", flex: 1 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-          <span style={{ fontSize: 9, color: lc, fontWeight: "bold", letterSpacing: 0.5 }}>{stage.level}</span>
-          <span style={{ fontSize: 9, color: "var(--accent)" }}>⏱ {stage.duration}</span>
+  return (
+    <div style={{
+      background: "var(--bg-card)",
+      border: "1px solid var(--border)",
+      borderLeft: `4px solid ${dc}`,
+      borderRadius: 10,
+      overflow: "hidden",
+      flex: isParallel ? "1 1 0" : undefined,
+      animation: "fadeSlideIn 0.3s ease-out both",
+    }}>
+      {/* Header */}
+      <div style={{ padding: "11px 14px 9px", borderBottom: "1px solid var(--border-subtle)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4 }}>
+          <span style={{ fontSize: 9, padding: "2px 7px", borderRadius: 6, background: dc + "18", color: dc, fontWeight: "bold", letterSpacing: 0.3 }}>
+            {concept.difficulty}
+          </span>
+          <span style={{ fontSize: 9, color: "var(--text-muted)" }}>{concept.category}</span>
         </div>
-        <div style={{ color: "var(--text-primary)", fontFamily: "Georgia, serif", fontSize: 12, fontWeight: "bold", marginBottom: 7 }}>{stage.title}</div>
-        {stage.prerequisites?.length > 0 && (
-          <div style={{ marginBottom: 7 }}>
-            <div style={{ fontSize: 8, color: "var(--text-muted)", fontWeight: "bold", letterSpacing: 1, marginBottom: 3 }}>REQUIRES</div>
-            {stage.prerequisites.map((p, i) => (
-              <div key={i} style={{ fontSize: 10, color: "var(--text-muted)", display: "flex", alignItems: "flex-start", gap: 4 }}>
-                <span style={{ color: lc }}>→</span>{p}
-              </div>
-            ))}
-          </div>
+        <div style={{ color: "var(--text-primary)", fontFamily: "Georgia, serif", fontSize: 14, fontWeight: "bold", lineHeight: 1.3 }}>
+          {concept.name}
+        </div>
+      </div>
+
+      {/* Description + analogy — always visible */}
+      <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border-subtle)" }}>
+        <p style={{ color: "var(--text-secondary)", fontSize: 12, lineHeight: 1.75, margin: 0 }}>
+          {concept.description}
+        </p>
+        {concept.analogy && (
+          <p style={{
+            color: dc, fontFamily: "Georgia, serif", fontSize: 12,
+            lineHeight: 1.65, fontStyle: "italic", margin: "9px 0 0",
+            padding: "6px 10px",
+            borderLeft: `3px solid ${dc}40`,
+            background: dc + "09",
+          }}>
+            "{concept.analogy}"
+          </p>
         )}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: stageConcepts.length ? 7 : 0 }}>
-          {stageConcepts.map(c => (
-            <span key={c.id} onClick={() => onSelectConcept(c.id)} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 8, background: DIFF_COLOR[c.difficulty] + "18", color: DIFF_COLOR[c.difficulty], cursor: "pointer", fontFamily: "Georgia, serif" }}>
-              {c.name}
+      </div>
+
+      {/* Glance row: figures + works + event year as chips */}
+      <div style={{ padding: "8px 14px", display: "flex", flexWrap: "wrap", gap: 5, borderBottom: "1px solid var(--border-subtle)" }}>
+        {linkedFigures.map(f => (
+          <span key={f.id} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: "#c9a84c18", color: "#c9a84c", fontFamily: "Georgia, serif" }}>
+            👤 {f.name}
+          </span>
+        ))}
+        {linkedWorks.map(w => {
+          const wc = CAT[w.category]?.color ?? "#60a5fa";
+          return (
+            <span key={w.id} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: wc + "18", color: wc, fontFamily: "Georgia, serif" }}>
+              📚 {w.title}
             </span>
+          );
+        })}
+        {linkedEvent && (
+          <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: "#6b728018", color: "#6b7280" }}>
+            🕰 {linkedEvent.year}
+          </span>
+        )}
+        {linkedFigures.length === 0 && linkedWorks.length === 0 && !linkedEvent && (
+          <span style={{ fontSize: 10, color: "var(--text-muted)" }}>Loading context…</span>
+        )}
+      </div>
+
+      {/* Expand toggle */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{ width: "100%", padding: "7px 14px", background: "none", border: "none", cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 5 }}
+      >
+        <span style={{ fontSize: 9, color: "var(--text-muted)", fontWeight: "bold", letterSpacing: 0.8 }}>
+          {open ? "▲ HIDE CONTEXT" : "▼ SHOW CONTEXT"}
+        </span>
+        {(linkedFigures.length > 0 || linkedWorks.length > 0 || linkedEvent) && !open && (
+          <span style={{ fontSize: 9, color: "var(--text-muted)" }}>
+            {[
+              linkedFigures.length > 0 && `${linkedFigures.length} figure${linkedFigures.length > 1 ? "s" : ""}`,
+              linkedWorks.length > 0 && `${linkedWorks.length} work${linkedWorks.length > 1 ? "s" : ""}`,
+              linkedEvent && "1 event",
+            ].filter(Boolean).join(" · ")}
+          </span>
+        )}
+      </button>
+
+      {/* Expanded context */}
+      {open && (
+        <div style={{ borderTop: "1px solid var(--border-subtle)" }}>
+
+          {/* Figures */}
+          {linkedFigures.length > 0 && (
+            <div style={{ padding: "10px 14px", borderBottom: linkedWorks.length > 0 || linkedEvent ? "1px solid var(--border-subtle)" : "none" }}>
+              <div style={{ fontSize: 9, color: "var(--text-muted)", fontWeight: "bold", letterSpacing: 1, marginBottom: 8 }}>DISCOVERED / DEVELOPED BY</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                {linkedFigures.map(f => (
+                  <div key={f.id} style={{ padding: "9px 11px", borderRadius: 7, background: "var(--bg-secondary)", border: "1px solid var(--border)" }}>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 4 }}>
+                      <span style={{ color: "var(--accent)", fontFamily: "Georgia, serif", fontSize: 12, fontWeight: "bold" }}>{f.name}</span>
+                      <span style={{ color: "var(--text-muted)", fontSize: 10 }}>{f.years}</span>
+                    </div>
+                    <p style={{ color: "var(--text-secondary)", fontSize: 11, lineHeight: 1.65, margin: 0 }}>{f.contribution}</p>
+                    {f.surprising_fact && (
+                      <p style={{ color: "var(--text-muted)", fontSize: 10, fontStyle: "italic", margin: "6px 0 0" }}>✦ {f.surprising_fact}</p>
+                    )}
+                    {f.influenced?.length > 0 && (
+                      <div style={{ marginTop: 6, display: "flex", gap: 5, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 9, color: "var(--text-muted)" }}>Influenced:</span>
+                        {f.influenced.slice(0, 4).map(n => (
+                          <span key={n} style={{ fontSize: 9, padding: "1px 6px", borderRadius: 8, background: "#c9a84c12", color: "#c9a84c" }}>{n}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Works */}
+          {linkedWorks.length > 0 && (
+            <div style={{ padding: "10px 14px", borderBottom: linkedEvent ? "1px solid var(--border-subtle)" : "none" }}>
+              <div style={{ fontSize: 9, color: "var(--text-muted)", fontWeight: "bold", letterSpacing: 1, marginBottom: 8 }}>READ TO MASTER THIS CONCEPT</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {linkedWorks.map(w => {
+                  const wc = CAT[w.category] ?? { color: "#60a5fa", bg: "#60a5fa14" };
+                  return (
+                    <div key={w.id} style={{ padding: "9px 11px", borderRadius: 7, background: wc.bg, border: `1px solid ${wc.color}30` }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4 }}>
+                        <span style={{ fontSize: 9, color: wc.color, fontWeight: "bold" }}>{w.category}</span>
+                        <span style={{ fontSize: 9, color: "var(--text-muted)" }}>⏱ {w.reading_time}</span>
+                        {w.year > 0 && <span style={{ fontSize: 9, color: "var(--text-muted)" }}>{w.year}</span>}
+                      </div>
+                      <div style={{ color: "var(--text-primary)", fontFamily: "Georgia, serif", fontSize: 12, fontWeight: "bold", marginBottom: 2 }}>
+                        📚 {w.title}
+                      </div>
+                      <div style={{ color: "var(--text-muted)", fontSize: 10, marginBottom: 6 }}>{w.authors.join(", ")}</div>
+                      <p style={{ color: "var(--text-secondary)", fontSize: 11, lineHeight: 1.65, margin: 0 }}>{w.why_essential}</p>
+                      {w.what_you_gain && (
+                        <p style={{ color: wc.color, fontSize: 10, lineHeight: 1.55, margin: "5px 0 0", fontStyle: "italic" }}>After this: {w.what_you_gain}</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Timeline event */}
+          {linkedEvent && (
+            <div style={{ padding: "10px 14px" }}>
+              <div style={{ fontSize: 9, color: "var(--text-muted)", fontWeight: "bold", letterSpacing: 1, marginBottom: 8 }}>HISTORICAL MOMENT</div>
+              <div style={{ display: "flex", gap: 12, padding: "9px 11px", borderRadius: 7, background: "var(--bg-secondary)", border: "1px solid var(--border)" }}>
+                <div style={{ flexShrink: 0, textAlign: "center", minWidth: 44 }}>
+                  <div style={{ color: EVENT_COLOR[linkedEvent.event_type] ?? "#c9a84c", fontFamily: "Georgia, serif", fontSize: 14, fontWeight: "bold" }}>{linkedEvent.year}</div>
+                  <div style={{ fontSize: 8, color: EVENT_COLOR[linkedEvent.event_type] ?? "#c9a84c", marginTop: 2, lineHeight: 1.3 }}>{linkedEvent.event_type.replace(/_/g, " ")}</div>
+                </div>
+                <div>
+                  <div style={{ color: "var(--text-primary)", fontFamily: "Georgia, serif", fontSize: 12, fontWeight: "bold", marginBottom: 3 }}>{linkedEvent.title}</div>
+                  <p style={{ color: "var(--text-secondary)", fontSize: 11, lineHeight: 1.6, margin: 0 }}>{linkedEvent.description}</p>
+                  {linkedEvent.significance && (
+                    <p style={{ color: "var(--text-muted)", fontSize: 10, fontStyle: "italic", margin: "5px 0 0" }}>{linkedEvent.significance}</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Stage block ────────────────────────────────────────────────────────────────
+
+function StageBlock({
+  stage, concepts, figures, works, events, isParallel,
+}: {
+  stage: CanonStage;
+  concepts: CanonConcept[];
+  figures: CanonFigure[];
+  works: CanonWork[];
+  events: CanonEvent[];
+  isParallel?: boolean;
+}) {
+  const lc = LEVEL_COLOR[stage.level] ?? "#c9a84c";
+  const stageConcepts = concepts.filter(c => stage.concept_ids?.includes(c.id));
+
+  return (
+    <div style={{ flex: isParallel ? "1 1 0" : undefined, minWidth: isParallel ? 280 : undefined }}>
+      {/* Track label for parallel */}
+      {isParallel && stage.track && (
+        <div style={{ padding: "4px 10px", marginBottom: 8, borderRadius: 6, background: lc + "12", border: `1px solid ${lc}40`, fontSize: 10, color: lc, fontWeight: "bold", textAlign: "center", fontFamily: "Georgia, serif" }}>
+          {stage.track}
+        </div>
+      )}
+
+      {/* Stage header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, padding: "0 2px" }}>
+        <span style={{ fontSize: 9, color: lc, fontWeight: "bold", letterSpacing: 1.2 }}>{stage.level}{stage.title ? ` · ${stage.title}` : ""}</span>
+        <span style={{ fontSize: 9, color: "var(--accent)", fontFamily: "Georgia, serif" }}>⏱ {stage.duration}</span>
+      </div>
+
+      {/* Prerequisites */}
+      {stage.prerequisites?.length > 0 && (
+        <div style={{ marginBottom: 8, padding: "6px 10px", borderRadius: 6, background: "rgba(0,0,0,0.2)", border: "1px solid var(--border-subtle)" }}>
+          <div style={{ fontSize: 8, color: "var(--text-muted)", fontWeight: "bold", letterSpacing: 1, marginBottom: 4 }}>PREREQUISITES</div>
+          {stage.prerequisites.map((p, i) => (
+            <div key={i} style={{ display: "flex", gap: 5, alignItems: "flex-start" }}>
+              <span style={{ color: lc, fontSize: 10, lineHeight: 1.4, flexShrink: 0 }}>→</span>
+              <span style={{ color: "var(--text-secondary)", fontSize: 10, lineHeight: 1.5 }}>{p}</span>
+            </div>
           ))}
         </div>
-        {stage.work_id && (
-          <div onClick={() => onSelectWork(stage.work_id!)} style={{ cursor: "pointer", padding: "5px 8px", borderRadius: 6, background: wc + "18", border: `1px solid ${wc}30`, marginTop: 4 }}>
-            <div style={{ fontSize: 9, color: wc, fontWeight: "bold", marginBottom: 2 }}>{stage.work_category} · read now</div>
-            <div style={{ fontSize: 11, color: "var(--text-primary)", fontFamily: "Georgia, serif" }}>📚 {stage.work_title}</div>
-            {stage.work_authors?.length > 0 && <div style={{ fontSize: 10, color: "var(--text-muted)" }}>{stage.work_authors.join(", ")}</div>}
-          </div>
-        )}
-        {stage.milestone && (
-          <div style={{ marginTop: 7, fontSize: 10, color: "var(--text-muted)", background: "var(--bg-secondary)", padding: "5px 8px", borderRadius: 5 }}>
-            <span style={{ color: lc, fontWeight: "bold" }}>✓ </span>{stage.milestone}
+      )}
+
+      {/* Concept cards */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {stageConcepts.map(concept => {
+          const linkedFigures = figures.filter(f => concept.figure_ids?.includes(f.id));
+          const linkedWorks   = works.filter(w => concept.work_ids?.includes(w.id));
+          const linkedEvent   = events.find(e => e.concept_id === concept.id) ?? null;
+          return (
+            <ConceptCard
+              key={concept.id}
+              concept={concept}
+              linkedFigures={linkedFigures}
+              linkedWorks={linkedWorks}
+              linkedEvent={linkedEvent}
+              isParallel={isParallel}
+            />
+          );
+        })}
+        {stageConcepts.length === 0 && (
+          <div style={{ padding: "10px 14px", background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text-muted)", fontSize: 11 }}>
+            Concepts loading…
           </div>
         )}
       </div>
-    );
+
+      {/* Milestone */}
+      {stage.milestone && (
+        <div style={{ marginTop: 8, padding: "7px 10px", borderRadius: 6, background: lc + "10", border: `1px solid ${lc}25` }}>
+          <span style={{ fontSize: 9, color: lc, fontWeight: "bold" }}>✓ MILESTONE </span>
+          <span style={{ fontSize: 10, color: "var(--text-secondary)", lineHeight: 1.5 }}>{stage.milestone}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Sequential arrow ───────────────────────────────────────────────────────────
+
+function Arrow() {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", margin: "3px 0" }}>
+      <div style={{ width: 1, height: 14, background: "var(--border)" }} />
+      <div style={{ color: "var(--border)", fontSize: 13, lineHeight: 1 }}>▼</div>
+    </div>
+  );
+}
+
+// ── Level divider ─────────────────────────────────────────────────────────────
+
+function LevelDivider({ level }: { level: string }) {
+  const LEVEL_META: Record<string, string> = {
+    FOUNDATIONS:    "Core prerequisites — everyone starts here",
+    INTERMEDIATE:   "Building theoretical sophistication",
+    ADVANCED:       "Deep mastery of the main apparatus",
+    SPECIALIZATION: "Choose your specialist path",
+    RESEARCH:       "Active frontier",
+  };
+  const color = LEVEL_COLOR[level] ?? "#c9a84c";
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "20px 0 8px" }}>
+      <div style={{ flex: 1, height: 1, background: color + "30" }} />
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontSize: 10, color, fontWeight: "bold", letterSpacing: 2 }}>{level}</div>
+        {LEVEL_META[level] && <div style={{ fontSize: 9, color: "var(--text-muted)", marginTop: 1 }}>{LEVEL_META[level]}</div>}
+      </div>
+      <div style={{ flex: 1, height: 1, background: color + "30" }} />
+    </div>
+  );
+}
+
+// ── Parallel block with scroll buttons ────────────────────────────────────────
+
+function ParallelBlock({
+  tracks, concepts, figures, works, events, level, showFanout,
+}: {
+  tracks: { name: string | null; stages: CanonStage[] }[];
+  concepts: CanonConcept[];
+  figures: CanonFigure[];
+  works: CanonWork[];
+  events: CanonEvent[];
+  level: string;
+  showFanout: boolean;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [canLeft, setCanLeft] = useState(false);
+  const [canRight, setCanRight] = useState(false);
+  const lc = LEVEL_COLOR[level] ?? "#a78bfa";
+
+  function updateScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    setCanLeft(el.scrollLeft > 4);
+    setCanRight(el.scrollLeft < el.scrollWidth - el.clientWidth - 4);
   }
 
-  let prevLevel = "";
-  return (
-    <div style={{ overflowY: "auto", height: "100%", padding: "16px 20px" }}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-        {groups.map((g, gi) => {
-          const level = g.type === "seq" ? g.stage.level : g.stages[0]?.level ?? "FOUNDATIONS";
-          const lc = levelColor(level);
-          const showDivider = level !== prevLevel;
-          if (showDivider) prevLevel = level;
+  useEffect(() => {
+    updateScroll();
+    window.addEventListener("resize", updateScroll);
+    return () => window.removeEventListener("resize", updateScroll);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tracks]);
 
-          return (
-            <div key={gi}>
-              {showDivider && (
-                <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "16px 0 8px" }}>
-                  <div style={{ flex: 1, height: 1, background: lc + "30" }} />
-                  <span style={{ fontSize: 9, color: lc, fontWeight: "bold", letterSpacing: 2 }}>{level}</span>
-                  <div style={{ flex: 1, height: 1, background: lc + "30" }} />
-                </div>
-              )}
-              {gi > 0 && !showDivider && (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", margin: "2px 0" }}>
-                  <div style={{ width: 1, height: 12, background: "var(--border)" }} />
-                  <div style={{ color: "var(--border)", fontSize: 11 }}>▼</div>
-                </div>
-              )}
-              {g.type === "seq" ? (
-                <StageCard stage={g.stage} />
-              ) : (
-                <div style={{ display: "flex", gap: 8, overflowX: "auto" }}>
-                  {g.stages.map(st => <StageCard key={st.stage_id} stage={st} />)}
-                </div>
-              )}
-            </div>
-          );
-        })}
+  const scroll = (dir: number) => scrollRef.current?.scrollBy({ left: dir * 320, behavior: "smooth" });
+
+  return (
+    <div>
+      {showFanout && (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", margin: "4px 0 8px" }}>
+          <div style={{ width: 1, height: 12, background: "var(--border)" }} />
+          <div style={{ fontSize: 9, color: lc, letterSpacing: 0.8, padding: "2px 12px", border: `1px solid ${lc}45`, borderRadius: 8, background: lc + "10" }}>
+            {tracks.length} PARALLEL TRACK{tracks.length !== 1 ? "S" : ""} — study simultaneously
+          </div>
+        </div>
+      )}
+      <div style={{ position: "relative" }}>
+        {canLeft && (
+          <button onClick={() => scroll(-1)} style={{ position: "absolute", left: 0, top: "50%", transform: "translateY(-50%)", zIndex: 3, width: 32, height: 50, background: "rgba(13,17,23,0.92)", border: `1px solid ${lc}55`, borderLeft: "none", borderRadius: "0 8px 8px 0", color: lc, fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `3px 0 10px rgba(0,0,0,0.4)` }}>‹</button>
+        )}
+        <div ref={scrollRef} onScroll={updateScroll} style={{ overflowX: "auto", paddingBottom: 4 }}>
+          <div style={{ display: "flex", gap: 10, minWidth: "fit-content", padding: "2px 4px" }}>
+            {tracks.map((track, ti) => (
+              <div key={ti} style={{ display: "flex", flexDirection: "column", gap: 0, width: 310, flexShrink: 0 }}>
+                {track.stages.map((stage, si) => (
+                  <div key={stage.stage_id}>
+                    {si > 0 && (
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", margin: "4px 0" }}>
+                        <div style={{ width: 1, height: 10, background: "var(--border)" }} />
+                        <div style={{ color: "var(--border)", fontSize: 10, lineHeight: 1 }}>▼</div>
+                      </div>
+                    )}
+                    <StageBlock stage={stage} concepts={concepts} figures={figures} works={works} events={events} isParallel />
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+        {canRight && (
+          <button onClick={() => scroll(1)} style={{ position: "absolute", right: 0, top: "50%", transform: "translateY(-50%)", zIndex: 3, width: 32, height: 50, background: "rgba(13,17,23,0.92)", border: `1px solid ${lc}55`, borderRight: "none", borderRadius: "8px 0 0 8px", color: lc, fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `-3px 0 10px rgba(0,0,0,0.4)` }}>›</button>
+        )}
       </div>
     </div>
   );
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
+// ── Main ───────────────────────────────────────────────────────────────────────
 
 function CanonInner() {
   const params = useParams();
@@ -623,21 +559,11 @@ function CanonInner() {
   const [works,    setWorks]    = useState<CanonWork[]>([]);
   const [events,   setEvents]   = useState<CanonEvent[]>([]);
   const [stages,   setStages]   = useState<CanonStage[]>([]);
-  const [layer,    setLayer]    = useState<Layer>("concepts");
-  const [selType,  setSelType]  = useState<SelType>(null);
-  const [selId,    setSelId]    = useState<string | null>(null);
   const [status,   setStatus]   = useState<Status>("idle");
   const [gen,      setGen]      = useState(0);
   const abortRef = useRef<AbortController | null>(null);
-  const cacheKey = `canon-v1:${slug}`;
+  const cacheKey = `canon-v2:${slug}`;
   const TTL = 14 * 24 * 60 * 60 * 1000;
-
-  const select = useCallback((type: SelType, id: string) => { setSelType(type); setSelId(id); }, []);
-  const onSelectConcept = useCallback((id: string) => { select("concept", id); setLayer("concepts"); }, [select]);
-  const onSelectWork    = useCallback((id: string) => select("work", id),    [select]);
-  const onSelectFigure  = useCallback((id: string) => { select("figure", id); setLayer("figures"); }, [select]);
-  const onSelectEvent   = useCallback((id: string) => select("event", id),   [select]);
-  const clearSel        = useCallback(() => { setSelType(null); setSelId(null); }, []);
 
   useEffect(() => {
     if (!slug) return;
@@ -701,7 +627,6 @@ function CanonInner() {
         if ((e as Error)?.name !== "AbortError") setStatus("error");
       }
     })();
-
     return () => { abortRef.current?.abort(); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug, gen]);
@@ -710,96 +635,106 @@ function CanonInner() {
     abortRef.current?.abort();
     localStorage.removeItem(cacheKey);
     setFigures([]); setConcepts([]); setWorks([]); setEvents([]); setStages([]);
-    setStatus("idle"); setSelType(null); setSelId(null);
-    setGen(g => g + 1);
+    setStatus("idle"); setGen(g => g + 1);
   }
 
   const isStreaming = status === "streaming";
+  const groups = groupStages(stages);
+  let currentLevel = "";
+
   const total = figures.length + concepts.length + works.length + events.length + stages.length;
 
-  // Build concept graph nodes
-  const graphConcepts: CanonConceptNode[] = concepts.map(c => ({
-    ...c, isSelected: c.id === selId && selType === "concept", onClick: () => onSelectConcept(c.id),
-  }));
-
-  const hasPanel = selType !== null && selId !== null;
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 120px)" }}>
-      {/* Layer switcher + status */}
-      <div style={{ display: "flex", alignItems: "center", gap: 0, borderBottom: "1px solid var(--border)", background: "var(--bg-secondary)", flexShrink: 0 }}>
-        {LAYERS.map(l => (
-          <button
-            key={l.id}
-            onClick={() => setLayer(l.id)}
-            style={{
-              padding: "10px 18px", background: "none", border: "none",
-              borderBottom: `2px solid ${layer === l.id ? "var(--accent)" : "transparent"}`,
-              color: layer === l.id ? "var(--accent)" : "var(--text-muted)",
-              fontFamily: "Georgia, serif", fontSize: 13, cursor: "pointer",
-              transition: "color 0.15s", whiteSpace: "nowrap",
-            }}
-          >{l.label}</button>
-        ))}
-        <div style={{ flex: 1 }} />
-        <div style={{ fontSize: 11, color: "var(--text-muted)", paddingRight: 12 }}>
-          {total > 0 && `${figures.length} figures · ${concepts.length} concepts · ${works.length} works · ${events.length} events`}
-          {isStreaming ? " · generating…" : ""}
+    <div style={{ minHeight: "100%", paddingBottom: 60 }}>
+      <style>{`
+        @keyframes fadeSlideIn {
+          from { opacity: 0; transform: translateY(12px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+
+      {/* Status bar */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
+        {total > 0 && (
+          <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            {figures.length} figures · {concepts.length} concepts · {works.length} works · {events.length} events · {stages.length} stages
+            {isStreaming ? " · generating…" : " · complete"}
+          </span>
+        )}
+        {isStreaming && total === 0 && (
+          <span style={{ fontSize: 13, color: "var(--text-muted)", fontFamily: "Georgia, serif" }}>Building your Canon…</span>
+        )}
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          {isStreaming && (
+            <button onClick={() => { abortRef.current?.abort(); setStatus("done"); }}
+              style={{ padding: "5px 12px", background: "none", border: "1px solid var(--red)", borderRadius: 6, color: "var(--red)", fontFamily: "Georgia, serif", fontSize: 12, cursor: "pointer" }}>
+              ■ Stop
+            </button>
+          )}
+          {status === "done" && (
+            <button onClick={regenerate}
+              style={{ padding: "5px 12px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text-muted)", fontFamily: "Georgia, serif", fontSize: 12, cursor: "pointer" }}
+              onMouseEnter={e => (e.currentTarget.style.borderColor = "var(--accent)")}
+              onMouseLeave={e => (e.currentTarget.style.borderColor = "var(--border)")}
+            >↺ Regenerate</button>
+          )}
         </div>
-        {status === "done" && (
-          <button onClick={regenerate} style={{ marginRight: 12, padding: "5px 12px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text-muted)", fontFamily: "Georgia, serif", fontSize: 12, cursor: "pointer" }}
-            onMouseEnter={e => (e.currentTarget.style.borderColor = "var(--accent)")}
-            onMouseLeave={e => (e.currentTarget.style.borderColor = "var(--border)")}
-          >↺ Regenerate</button>
+        {status === "error" && (
+          <button onClick={regenerate} style={{ background: "none", border: "1px solid var(--accent)", borderRadius: 6, color: "var(--accent)", padding: "5px 14px", fontFamily: "Georgia, serif", fontSize: 12, cursor: "pointer" }}>
+            Error — try again
+          </button>
         )}
       </div>
 
-      {/* Canvas + Detail panel */}
-      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-        {/* Layer canvas */}
-        <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
-          {status === "streaming" && total === 0 && (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-muted)", fontFamily: "Georgia, serif", fontSize: 15 }}>
-              Building your Canon…
+      {/* Waterfall */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+        {groups.map((group, gi) => {
+          const groupLevel = group.type === "seq" ? group.stage.level : group.tracks[0]?.stages[0]?.level ?? "FOUNDATIONS";
+          const showDivider = groupLevel !== currentLevel;
+          if (showDivider) currentLevel = groupLevel;
+
+          if (group.type === "seq") {
+            return (
+              <div key={`seq-${gi}`}>
+                {showDivider && <LevelDivider level={groupLevel} />}
+                {gi > 0 && !showDivider && <Arrow />}
+                <StageBlock stage={group.stage} concepts={concepts} figures={figures} works={works} events={events} />
+              </div>
+            );
+          } else {
+            return (
+              <div key={`par-${gi}`}>
+                {showDivider && <LevelDivider level={groupLevel} />}
+                <ParallelBlock
+                  tracks={group.tracks}
+                  concepts={concepts}
+                  figures={figures}
+                  works={works}
+                  events={events}
+                  level={groupLevel}
+                  showFanout={gi > 0}
+                />
+              </div>
+            );
+          }
+        })}
+
+        {/* Streaming pulse */}
+        {isStreaming && stages.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginTop: 8 }}>
+            <div style={{ width: 1, height: 14, background: "var(--border)" }} />
+            <div style={{ color: "var(--accent)", fontSize: 12, fontFamily: "Georgia, serif" }}>● generating…</div>
+          </div>
+        )}
+
+        {/* Completion */}
+        {status === "done" && stages.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, marginTop: 10 }}>
+            <div style={{ width: 1, height: 18, background: "var(--border)" }} />
+            <div style={{ border: "1px solid var(--accent-dim)", borderRadius: 8, padding: "8px 24px", color: "var(--accent)", fontFamily: "Georgia, serif", fontSize: 13 }}>
+              ✓ Research Frontier
             </div>
-          )}
-          {status === "error" && (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 12 }}>
-              <div style={{ color: "var(--red)", fontFamily: "Georgia, serif" }}>Something went wrong.</div>
-              <button onClick={regenerate} style={{ background: "none", border: "1px solid var(--accent)", borderRadius: 6, color: "var(--accent)", padding: "6px 16px", fontFamily: "Georgia, serif", cursor: "pointer" }}>Try again</button>
-            </div>
-          )}
-
-          {layer === "concepts" && concepts.length > 0 && (
-            <CanonConceptGraph
-              concepts={graphConcepts}
-              selectedId={selType === "concept" ? selId : null}
-              onSelect={onSelectConcept}
-            />
-          )}
-
-          {layer === "timeline" && (
-            <TimelineLayer events={events} selectedId={selType === "event" ? selId : null} onSelect={onSelectEvent} />
-          )}
-
-          {layer === "figures" && (
-            <FiguresLayer figures={figures} concepts={concepts} selectedId={selType === "figure" ? selId : null} onSelect={onSelectFigure} />
-          )}
-
-          {layer === "reading" && (
-            <ReadingLayer stages={stages} concepts={concepts} onSelectConcept={onSelectConcept} onSelectWork={onSelectWork} />
-          )}
-        </div>
-
-        {/* Detail panel */}
-        {hasPanel && (
-          <DetailPanel
-            selType={selType} selId={selId}
-            concepts={concepts} works={works} figures={figures} events={events}
-            topic={slug} label={label}
-            onSelectConcept={onSelectConcept} onSelectWork={onSelectWork} onSelectFigure={onSelectFigure}
-            onClose={clearSel}
-          />
+          </div>
         )}
       </div>
     </div>
