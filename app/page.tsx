@@ -71,17 +71,23 @@ export default function HomePage() {
         </div>
       </form>
 
-      {/* Browse link */}
-      <div className="mb-4">
-        <a
-          href="/browse"
-          className="inline-block px-4 py-2 rounded-lg text-sm transition-all"
-          style={{ color: 'var(--text-muted)', border: '1px solid var(--border)', fontFamily: 'Georgia, serif', textDecoration: 'none' }}
-          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)'; (e.currentTarget as HTMLElement).style.color = 'var(--accent)'; }}
-          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'; }}
-        >
-          ◈ Browse by Theme
-        </a>
+      {/* Navigation links */}
+      <div className="mb-4 flex gap-3 flex-wrap justify-center">
+        {[
+          { href: "/browse", label: "◈ Browse by Theme" },
+          { href: "/map", label: "🗺️ Learning Map" },
+        ].map(link => (
+          <a
+            key={link.href}
+            href={link.href}
+            className="inline-block px-4 py-2 rounded-lg text-sm transition-all"
+            style={{ color: 'var(--text-muted)', border: '1px solid var(--border)', fontFamily: 'Georgia, serif', textDecoration: 'none' }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)'; (e.currentTarget as HTMLElement).style.color = 'var(--accent)'; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-muted)'; }}
+          >
+            {link.label}
+          </a>
+        ))}
       </div>
 
       {/* Example topics */}

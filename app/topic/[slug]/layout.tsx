@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useParams, usePathname, useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { Suspense, useState, useEffect } from "react";
 
 const TABS = [
   { id: "concepts", label: "◈ Concepts", desc: "Deep concept map" },
@@ -10,6 +10,7 @@ const TABS = [
   { id: "bigpicture", label: "🌐 Big Picture", desc: "History & context" },
   { id: "practice", label: "✏️ Practice", desc: "Exercises & quizzes" },
   { id: "discover", label: "🔭 Discover", desc: "What's next" },
+  { id: "tutor", label: "🎓 Tutor", desc: "Socratic dialogue" },
   { id: "notebooklm", label: "🎙️ NotebookLM", desc: "AI workspace" },
 ];
 
@@ -22,6 +23,7 @@ function clearTopicCache(slug: string, label: string) {
     `sc2:discover:${slug}`,
     `concepts-list-v2:${slug}`,
     `works-list-v3:${slug}`,
+    `tutor-session:${slug}`,
   ].forEach(k => localStorage.removeItem(k));
 
   // Dynamic keys: work chapters and concept deep-dives for this topic
@@ -43,6 +45,16 @@ function TopicLayoutInner({ children }: { children: React.ReactNode }) {
   const slug = params.slug as string;
   const label = searchParams.get("label") || slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
   const [resetting, setResetting] = useState(false);
+
+  // Persist topic label for the Learning Map
+  useEffect(() => {
+    const metaKey = `topic-meta:${slug}`;
+    const existing = localStorage.getItem(metaKey);
+    if (!existing) {
+      localStorage.setItem(metaKey, JSON.stringify({ label, firstSeen: Date.now() }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slug]);
 
   const activeTab = TABS.find(t => pathname.includes(`/${t.id}`))?.id || "concepts";
 
