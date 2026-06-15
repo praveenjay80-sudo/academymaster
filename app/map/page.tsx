@@ -1,516 +1,549 @@
 "use client";
 import dynamic from "next/dynamic";
-import { useEffect, useState, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
-import type { TopicNodeData } from "@/components/MapGraph";
+import { useEffect, useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import type { ConceptItem } from "@/components/ConceptGraph";
 
-const MapGraph = dynamic(() => import("@/components/MapGraph"), { ssr: false });
+const ConceptGraph = dynamic(() => import("@/components/ConceptGraph"), { ssr: false });
 
-interface StoredConcept {
-  id: string;
-  name: string;
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface Work {
+  _type: "essential" | "anti_library";
+  id?: string;
+  title: string;
+  authors?: string[];
+  year?: number;
+  type?: string;
   difficulty?: string;
+  plain_description?: string;
+  why_it_matters?: string;
+  prerequisites?: string;
+  what_you_gain?: string;
+  free_access?: string;
 }
 
-interface TopicInfo {
+interface StudiedTopic {
   slug: string;
   label: string;
-  concepts: StoredConcept[];
-  workCount: number;
+  concepts: ConceptItem[];
+  works: Work[];
   firstSeen?: number;
 }
 
-function DetailPanel({
-  topic,
-  onClose,
-  onNavigate,
-}: {
-  topic: TopicInfo;
-  onClose: () => void;
-  onNavigate: (slug: string, label: string) => void;
-}) {
-  const foundational = topic.concepts.filter(c => c.difficulty === "FOUNDATIONAL");
-  const intermediate = topic.concepts.filter(c => c.difficulty === "INTERMEDIATE");
-  const advanced = topic.concepts.filter(c => c.difficulty === "ADVANCED");
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const TYPE_LABELS: Record<string, string> = {
+  TEXTBOOK: "Textbook",
+  SEMINAL_PAPER: "Paper",
+  POPULAR_SCIENCE: "Popular",
+  SURVEY: "Survey",
+  CLASSIC_ORIGINAL: "Classic",
+};
+
+const DIFF_ORDER: Record<string, number> = { BEGINNER: 0, INTERMEDIATE: 1, ADVANCED: 2 };
+
+function estimateTime(type = "", difficulty = ""): string {
+  if (type === "SEMINAL_PAPER") return "2–6 hrs";
+  if (type === "POPULAR_SCIENCE") return "1–2 wks";
+  if (type === "SURVEY") return "2–5 days";
+  if (type === "CLASSIC_ORIGINAL") return difficulty === "BEGINNER" ? "3–6 wks" : "1–3 mo";
+  const map: Record<string, string> = { BEGINNER: "2–4 mo", INTERMEDIATE: "3–6 mo", ADVANCED: "4–8 mo" };
+  return map[difficulty] || "2–4 mo";
+}
+
+function phaseTime(works: Work[], difficulty: string): string {
+  const subset = works.filter(w => w._type === "essential" && w.difficulty === difficulty);
+  if (subset.length === 0) return "";
+  const hasBook = subset.some(w => w.type === "TEXTBOOK" || w.type === "CLASSIC_ORIGINAL");
+  if (difficulty === "BEGINNER") return hasBook ? "2–4 months" : "2–6 weeks";
+  if (difficulty === "INTERMEDIATE") return hasBook ? "3–6 months" : "1–3 months";
+  return hasBook ? "4–8 months" : "2–4 months";
+}
+
+function loadTopics(): StudiedTopic[] {
+  const found: StudiedTopic[] = [];
+  const seen = new Set<string>();
+
+  // topic-meta: all visited topics
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key?.startsWith("topic-meta:")) continue;
+    const slug = key.slice("topic-meta:".length);
+    if (seen.has(slug)) continue;
+    seen.add(slug);
+
+    let label = slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    let firstSeen: number | undefined;
+    try {
+      const meta = JSON.parse(localStorage.getItem(key)!);
+      if (meta.label) label = meta.label;
+      if (meta.firstSeen) firstSeen = meta.firstSeen;
+    } catch { /**/ }
+
+    let concepts: ConceptItem[] = [];
+    try {
+      const raw = localStorage.getItem(`concepts-list-v2:${slug}`);
+      if (raw) { const { data, ts } = JSON.parse(raw); if (Array.isArray(data)) concepts = data; if (ts && !firstSeen) firstSeen = ts; }
+    } catch { /**/ }
+
+    let works: Work[] = [];
+    try {
+      const raw = localStorage.getItem(`works-list-v3:${slug}`);
+      if (raw) { const { data } = JSON.parse(raw); if (Array.isArray(data)) works = data; }
+    } catch { /**/ }
+
+    found.push({ slug, label, concepts, works, firstSeen });
+  }
+
+  // fallback: concepts-only topics (older sessions)
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key?.startsWith("concepts-list-v2:")) continue;
+    const slug = key.slice("concepts-list-v2:".length);
+    if (seen.has(slug)) continue;
+    seen.add(slug);
+    let label = slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    let concepts: ConceptItem[] = [];
+    let firstSeen: number | undefined;
+    try { const { data, ts } = JSON.parse(localStorage.getItem(key)!); if (Array.isArray(data)) concepts = data; firstSeen = ts; } catch { /**/ }
+    let works: Work[] = [];
+    try { const raw = localStorage.getItem(`works-list-v3:${slug}`); if (raw) { const { data } = JSON.parse(raw); if (Array.isArray(data)) works = data; } } catch { /**/ }
+    found.push({ slug, label, concepts, works, firstSeen });
+  }
+
+  return found.sort((a, b) => (b.firstSeen ?? 0) - (a.firstSeen ?? 0));
+}
+
+// ── Work card ──────────────────────────────────────────────────────────────────
+
+function WorkCard({ work, index }: { work: Work; index: number }) {
+  const [expanded, setExpanded] = useState(false);
+  const time = estimateTime(work.type, work.difficulty);
+  const typeLabel = TYPE_LABELS[work.type ?? ""] ?? work.type ?? "";
+  const diffColor = work.difficulty === "BEGINNER" ? "#4ade80"
+    : work.difficulty === "INTERMEDIATE" ? "#c9a84c" : "#f87171";
 
   return (
-    <div style={{
-      width: 340, flexShrink: 0,
-      background: "var(--bg-card)", border: "1px solid var(--border)",
-      borderRadius: 10, display: "flex", flexDirection: "column", overflow: "hidden",
-    }}>
-      <div style={{ padding: "16px 18px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div>
-          <div style={{ color: "var(--accent)", fontFamily: "Georgia, serif", fontSize: 16, fontWeight: "bold", marginBottom: 2 }}>
-            {topic.label}
+    <div style={{ marginBottom: 10 }}>
+      <div
+        onClick={() => setExpanded(e => !e)}
+        style={{
+          background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 8,
+          padding: "12px 14px", cursor: "pointer", transition: "border-color 0.15s",
+        }}
+        onMouseEnter={e => (e.currentTarget.style.borderColor = "var(--accent-dim)")}
+        onMouseLeave={e => (e.currentTarget.style.borderColor = "var(--border)")}
+      >
+        {/* Row 1: index + title */}
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+          <div style={{ color: "var(--text-muted)", fontSize: 12, fontFamily: "Georgia, serif", flexShrink: 0, marginTop: 2, minWidth: 20 }}>
+            {index}.
           </div>
-          {topic.firstSeen && (
-            <div style={{ color: "var(--text-muted)", fontSize: 11 }}>
-              Studied {new Date(topic.firstSeen).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+          <div style={{ flex: 1 }}>
+            <div style={{ color: "var(--text-primary)", fontFamily: "Georgia, serif", fontSize: 14, fontWeight: "bold", lineHeight: 1.3 }}>
+              {work.title}
+            </div>
+            {work.authors && work.authors.length > 0 && (
+              <div style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 2 }}>
+                {work.authors.join(", ")}{work.year ? ` (${work.year})` : ""}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Row 2: badges */}
+        <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: diffColor + "22", color: diffColor, fontWeight: "bold" }}>
+            {work.difficulty}
+          </span>
+          {typeLabel && (
+            <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: "var(--bg-secondary)", color: "var(--text-muted)" }}>
+              {typeLabel}
+            </span>
+          )}
+          <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: "var(--bg-secondary)", color: "var(--accent)", marginLeft: "auto" }}>
+            ⏱ {time}
+          </span>
+        </div>
+
+        {/* Expand hint */}
+        <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 6, textAlign: "right" }}>
+          {expanded ? "▲ less" : "▼ more"}
+        </div>
+      </div>
+
+      {expanded && (
+        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)", borderTop: "none", borderRadius: "0 0 8px 8px", padding: "12px 14px 14px" }}>
+          {work.plain_description && (
+            <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.7, margin: "0 0 8px" }}>
+              {work.plain_description}
+            </p>
+          )}
+          {work.prerequisites && (
+            <div style={{ marginBottom: 6 }}>
+              <span style={{ color: "var(--text-muted)", fontSize: 11, fontWeight: "bold" }}>Before reading: </span>
+              <span style={{ color: "var(--text-secondary)", fontSize: 12 }}>{work.prerequisites}</span>
             </div>
           )}
+          {work.what_you_gain && (
+            <div style={{ marginBottom: 6 }}>
+              <span style={{ color: "var(--accent)", fontSize: 11, fontWeight: "bold" }}>What you gain: </span>
+              <span style={{ color: "var(--text-secondary)", fontSize: 12 }}>{work.what_you_gain}</span>
+            </div>
+          )}
+          {work.free_access && work.free_access !== "Not freely available" && (
+            <div style={{ fontSize: 11, color: "#4ade80", marginTop: 4 }}>🔓 {work.free_access}</div>
+          )}
         </div>
-        <button onClick={onClose} style={{ color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer", fontSize: 20, lineHeight: 1, padding: "0 4px" }}>×</button>
-      </div>
-
-      <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
-        {[
-          { label: "Found.", count: foundational.length, color: "#4ade80" },
-          { label: "Inter.", count: intermediate.length, color: "#c9a84c" },
-          { label: "Adv.", count: advanced.length, color: "#f87171" },
-        ].map((s, i) => (
-          <div key={s.label} style={{ flex: 1, padding: "10px 8px", textAlign: "center", borderRight: i < 2 ? "1px solid var(--border)" : "none" }}>
-            <div style={{ color: s.color, fontSize: 20, fontWeight: "bold", fontFamily: "Georgia, serif" }}>{s.count}</div>
-            <div style={{ color: "var(--text-muted)", fontSize: 10 }}>{s.label}</div>
-          </div>
-        ))}
-      </div>
-
-      <div style={{ flex: 1, overflowY: "auto", padding: "14px 18px" }}>
-        {topic.concepts.length === 0 ? (
-          <div style={{ color: "var(--text-muted)", fontSize: 13, textAlign: "center", paddingTop: 16, lineHeight: 1.6 }}>
-            No concepts generated yet.<br />Visit the Concepts tab to build the map.
-          </div>
-        ) : (
-          [
-            { group: foundational, label: "Foundational", color: "#4ade80" },
-            { group: intermediate, label: "Intermediate", color: "#c9a84c" },
-            { group: advanced, label: "Advanced", color: "#f87171" },
-          ].map(({ group, label, color }) =>
-            group.length > 0 ? (
-              <div key={label} style={{ marginBottom: 14 }}>
-                <div style={{ color, fontSize: 10, fontWeight: "bold", letterSpacing: 1.2, marginBottom: 5 }}>
-                  {label.toUpperCase()} ({group.length})
-                </div>
-                {group.map(c => (
-                  <a
-                    key={c.id}
-                    href={`/topic/${topic.slug}/concepts?label=${encodeURIComponent(topic.label)}`}
-                    style={{ display: "block", color: "var(--text-secondary)", fontSize: 13, paddingLeft: 8, marginBottom: 3, lineHeight: 1.4, textDecoration: "none" }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "var(--accent)"; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-secondary)"; }}
-                  >
-                    {c.name}
-                  </a>
-                ))}
-              </div>
-            ) : null
-          )
-        )}
-      </div>
-
-      {/* Tab shortcuts */}
-      <div style={{ padding: "10px 18px", borderTop: "1px solid var(--border)", display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {[
-          { label: "◈ Concepts", tab: "concepts" },
-          { label: "📚 Works", tab: "works" },
-          { label: "🎓 Tutor", tab: "tutor" },
-          { label: "🗺️ Roadmap", tab: "roadmap" },
-        ].map(({ label, tab }) => (
-          <a
-            key={tab}
-            href={`/topic/${topic.slug}/${tab}?label=${encodeURIComponent(topic.label)}`}
-            style={{
-              flex: 1,
-              textAlign: "center",
-              background: "var(--bg-card)",
-              border: "1px solid var(--border)",
-              borderRadius: 6,
-              padding: "6px 8px",
-              fontFamily: "Georgia, serif",
-              fontSize: 11,
-              color: "var(--text-secondary)",
-              textDecoration: "none",
-              transition: "border-color 0.15s, color 0.15s",
-              whiteSpace: "nowrap",
-            }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--accent)"; (e.currentTarget as HTMLElement).style.color = "var(--accent)"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--border)"; (e.currentTarget as HTMLElement).style.color = "var(--text-secondary)"; }}
-          >
-            {label}
-          </a>
-        ))}
-      </div>
-
-      <div style={{ padding: "10px 18px", borderTop: "1px solid var(--border)" }}>
-        <button
-          onClick={() => onNavigate(topic.slug, topic.label)}
-          style={{
-            width: "100%", background: "var(--accent)", color: "#0d1117",
-            border: "none", borderRadius: 8, padding: "9px 16px",
-            fontFamily: "Georgia, serif", fontSize: 14, cursor: "pointer", fontWeight: "bold",
-          }}
-          onMouseEnter={e => (e.currentTarget.style.opacity = "0.85")}
-          onMouseLeave={e => (e.currentTarget.style.opacity = "1")}
-        >
-          Open {topic.label} →
-        </button>
-      </div>
+      )}
     </div>
   );
 }
 
-function buildEdges(topics: TopicInfo[]) {
-  const edges: { source: string; target: string; label: string }[] = [];
-  const seen = new Set<string>();
-  for (let i = 0; i < topics.length; i++) {
-    const namesA = new Set(topics[i].concepts.map(c => c.name.toLowerCase()));
-    for (let j = i + 1; j < topics.length; j++) {
-      const shared = topics[j].concepts.filter(c => namesA.has(c.name.toLowerCase()));
-      if (shared.length >= 2) {
-        const key = [topics[i].slug, topics[j].slug].sort().join("|");
-        if (!seen.has(key)) {
-          seen.add(key);
-          edges.push({ source: topics[i].slug, target: topics[j].slug, label: `${shared.length} shared` });
-        }
-      }
-    }
-  }
-  return edges;
-}
+// ── Main page ──────────────────────────────────────────────────────────────────
 
-export default function MapPage() {
+function MapPageInner() {
   const router = useRouter();
-  const [topics, setTopics] = useState<TopicInfo[]>([]);
-  const [edges, setEdges] = useState<{ source: string; target: string; label: string }[]>([]);
-  const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
+  const searchParams = useSearchParams();
+  const [topics, setTopics] = useState<StudiedTopic[]>([]);
+  const [selectedSlug, setSelectedSlug] = useState<string>("");
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<"graph" | "timeline">("graph");
-  const [search, setSearch] = useState("");
-  const searchRef = useRef<HTMLInputElement>(null);
+  const [selectedConcept, setSelectedConcept] = useState<ConceptItem | null>(null);
+  const [addQuery, setAddQuery] = useState("");
+  const [diffFilter, setDiffFilter] = useState<"ALL" | "FOUNDATIONAL" | "INTERMEDIATE" | "ADVANCED">("ALL");
 
   useEffect(() => {
-    const found: TopicInfo[] = [];
-    const seen = new Set<string>();
-
-    // Scan all localStorage keys — prefer topic-meta (all visited topics)
-    // then enrich with concepts/works data
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key?.startsWith("topic-meta:")) continue;
-      const slug = key.slice("topic-meta:".length);
-      if (seen.has(slug)) continue;
-      seen.add(slug);
-
-      let label = slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
-      let firstSeen: number | undefined;
-
-      try {
-        const meta = JSON.parse(localStorage.getItem(key)!);
-        if (meta.label) label = meta.label;
-        if (meta.firstSeen) firstSeen = meta.firstSeen;
-      } catch { /* use derived */ }
-
-      let concepts: StoredConcept[] = [];
-      try {
-        const raw = localStorage.getItem(`concepts-list-v2:${slug}`);
-        if (raw) {
-          const { data, ts } = JSON.parse(raw);
-          if (Array.isArray(data)) concepts = data;
-          if (ts && !firstSeen) firstSeen = ts;
-        }
-      } catch { /* no concepts */ }
-
-      let workCount = 0;
-      try {
-        const worksRaw = localStorage.getItem(`works-list-v3:${slug}`);
-        if (worksRaw) {
-          const { data } = JSON.parse(worksRaw);
-          if (Array.isArray(data)) workCount = data.filter((w: { _type?: string }) => w._type === "essential").length;
-        }
-      } catch { /* no works */ }
-
-      found.push({ slug, label, concepts, workCount, firstSeen });
+    const list = loadTopics();
+    setTopics(list);
+    const paramSlug = searchParams.get("topic");
+    if (paramSlug && list.find(t => t.slug === paramSlug)) {
+      setSelectedSlug(paramSlug);
+    } else if (list.length > 0) {
+      setSelectedSlug(list[0].slug);
     }
-
-    // Also catch topics that have concepts but no topic-meta (older sessions)
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key?.startsWith("concepts-list-v2:")) continue;
-      const slug = key.slice("concepts-list-v2:".length);
-      if (seen.has(slug)) continue;
-      seen.add(slug);
-
-      let label = slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
-      let concepts: StoredConcept[] = [];
-      let firstSeen: number | undefined;
-
-      try {
-        const { data, ts } = JSON.parse(localStorage.getItem(key)!);
-        if (Array.isArray(data)) concepts = data;
-        firstSeen = ts;
-      } catch { /* skip */ }
-
-      let workCount = 0;
-      try {
-        const worksRaw = localStorage.getItem(`works-list-v3:${slug}`);
-        if (worksRaw) {
-          const { data } = JSON.parse(worksRaw);
-          if (Array.isArray(data)) workCount = data.filter((w: { _type?: string }) => w._type === "essential").length;
-        }
-      } catch { /* no works */ }
-
-      found.push({ slug, label, concepts, workCount, firstSeen });
-    }
-
-    found.sort((a, b) => (b.firstSeen ?? 0) - (a.firstSeen ?? 0));
-    setTopics(found);
-    setEdges(buildEdges(found));
     setLoading(false);
-  }, []);
+  }, [searchParams]);
 
-  const handleSelect = useCallback((slug: string) => {
-    setSelectedSlug(prev => (prev === slug ? null : slug));
-  }, []);
-
-  function navigateToTopic(slug: string, label: string) {
-    router.push(`/topic/${slug}?label=${encodeURIComponent(label)}`);
+  function selectTopic(slug: string) {
+    setSelectedSlug(slug);
+    setSelectedConcept(null);
+    setDiffFilter("ALL");
+    router.replace(`/map?topic=${slug}`, { scroll: false });
   }
 
-  function handleSearch(e: React.FormEvent) {
+  function addTopic(e: React.FormEvent) {
     e.preventDefault();
-    const q = search.trim();
+    const q = addQuery.trim();
     if (!q) return;
-    // If it matches an existing topic, select it; otherwise navigate to it
-    const match = topics.find(t => t.label.toLowerCase() === q.toLowerCase());
-    if (match) {
-      setSelectedSlug(match.slug);
-    } else {
-      const slug = q.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-      router.push(`/topic/${slug}?label=${encodeURIComponent(q)}`);
-    }
+    const slug = q.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+    router.push(`/topic/${slug}?label=${encodeURIComponent(q)}`);
   }
 
-  const q = search.trim().toLowerCase();
-  const filteredTopics = q
-    ? topics.filter(t =>
-        t.label.toLowerCase().includes(q) ||
-        t.concepts.some(c => c.name.toLowerCase().includes(q))
-      )
-    : topics;
+  const topic = topics.find(t => t.slug === selectedSlug) ?? null;
 
-  const filteredSlugs = new Set(filteredTopics.map(t => t.slug));
-  const filteredEdges = edges.filter(e => filteredSlugs.has(e.source) && filteredSlugs.has(e.target));
-  const selectedTopic = filteredTopics.find(t => t.slug === selectedSlug) ?? null;
+  const essentialWorks = (topic?.works ?? [])
+    .filter(w => w._type === "essential")
+    .sort((a, b) => (DIFF_ORDER[a.difficulty ?? ""] ?? 0) - (DIFF_ORDER[b.difficulty ?? ""] ?? 0));
 
-  const topicNodes: TopicNodeData[] = filteredTopics.map(t => ({
-    slug: t.slug,
-    label: t.label,
-    foundational: t.concepts.filter(c => c.difficulty === "FOUNDATIONAL").length,
-    intermediate: t.concepts.filter(c => c.difficulty === "INTERMEDIATE").length,
-    advanced: t.concepts.filter(c => c.difficulty === "ADVANCED").length,
-    workCount: t.workCount,
-    firstSeen: t.firstSeen,
-    onClick: () => handleSelect(t.slug),
-  }));
+  const antiWorks = (topic?.works ?? []).filter(w => w._type === "anti_library");
+
+  const workGroups = [
+    { label: "Phase 1 — Foundation", diff: "BEGINNER", color: "#4ade80" },
+    { label: "Phase 2 — Core", diff: "INTERMEDIATE", color: "#c9a84c" },
+    { label: "Phase 3 — Advanced", diff: "ADVANCED", color: "#f87171" },
+  ];
+
+  const displayedConcepts = topic
+    ? (diffFilter === "ALL" ? topic.concepts : topic.concepts.filter(c => c.difficulty === diffFilter))
+    : [];
 
   if (loading) {
     return (
-      <main style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif" }}>Loading your learning map…</div>
-      </main>
+      <div style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <span style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif" }}>Loading…</span>
+      </div>
     );
   }
 
   return (
-    <main style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", flexDirection: "column" }}>
-      {/* Header */}
-      <header style={{ padding: "16px 32px", borderBottom: "1px solid var(--border)", background: "var(--bg-secondary)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 14 }}>
-          <a href="/" style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif", fontSize: 13, textDecoration: "none", flexShrink: 0 }}>← Home</a>
-          <a href="/browse" style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif", fontSize: 13, textDecoration: "none", border: "1px solid var(--border)", borderRadius: 6, padding: "4px 10px", flexShrink: 0 }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--accent)"; (e.currentTarget as HTMLElement).style.color = "var(--accent)"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--border)"; (e.currentTarget as HTMLElement).style.color = "var(--text-muted)"; }}
-          >◈ Browse Themes</a>
-          <h1 style={{ fontFamily: "Georgia, serif", color: "var(--accent)", fontSize: 22, margin: 0, flex: 1 }}>
-            ◈ Learning Map
-          </h1>
-          <span style={{ color: "var(--text-muted)", fontSize: 12 }}>
-            {filteredTopics.length}{q ? ` of ${topics.length}` : ""} topic{topics.length !== 1 ? "s" : ""}
-          </span>
+    <div style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", flexDirection: "column" }}>
 
-          {/* View toggle */}
-          <div style={{ display: "flex", gap: 4, background: "var(--bg-card)", borderRadius: 8, padding: 3, border: "1px solid var(--border)", flexShrink: 0 }}>
-            {(["graph", "timeline"] as const).map(v => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                style={{
-                  background: view === v ? "var(--accent)" : "transparent",
-                  color: view === v ? "#0d1117" : "var(--text-muted)",
-                  border: "none", borderRadius: 6, padding: "5px 14px",
-                  fontFamily: "Georgia, serif", fontSize: 13, cursor: "pointer",
-                  transition: "background 0.15s, color 0.15s",
-                }}
-              >
-                {v === "graph" ? "◉ Graph" : "≡ Timeline"}
-              </button>
-            ))}
-          </div>
-        </div>
+      {/* ── Header ─────────────────────────────────────────────────────── */}
+      <header style={{ background: "var(--bg-secondary)", borderBottom: "1px solid var(--border)", padding: "14px 24px", display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+        <a href="/" style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif", fontSize: 13, textDecoration: "none", flexShrink: 0 }}>← Home</a>
 
-        {/* Search bar */}
-        <form onSubmit={handleSearch} style={{ display: "flex", gap: 8 }}>
-          <input
-            ref={searchRef}
-            type="text"
-            value={search}
-            onChange={e => { setSearch(e.target.value); setSelectedSlug(null); }}
-            placeholder="Search topics or concepts… or type a new topic to explore it"
+        <h1 style={{ color: "var(--accent)", fontFamily: "Georgia, serif", fontSize: 20, margin: 0, flexShrink: 0 }}>◈ Learning Map</h1>
+
+        {/* Topic selector */}
+        {topics.length > 0 && (
+          <select
+            value={selectedSlug}
+            onChange={e => selectTopic(e.target.value)}
             style={{
-              flex: 1,
-              background: "var(--bg-card)",
-              border: "1px solid var(--border)",
-              borderRadius: 8,
-              padding: "9px 16px",
-              color: "var(--text-primary)",
-              fontFamily: "Georgia, serif",
-              fontSize: 14,
-              outline: "none",
+              background: "var(--bg-card)", color: "var(--text-primary)", border: "1px solid var(--border)",
+              borderRadius: 8, padding: "7px 12px", fontFamily: "Georgia, serif", fontSize: 14,
+              flex: 1, maxWidth: 340, cursor: "pointer",
+            }}
+          >
+            {topics.map(t => (
+              <option key={t.slug} value={t.slug}>{t.label}</option>
+            ))}
+          </select>
+        )}
+
+        {/* Add / search topic */}
+        <form onSubmit={addTopic} style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+          <input
+            value={addQuery}
+            onChange={e => setAddQuery(e.target.value)}
+            placeholder="Add a topic…"
+            style={{
+              background: "var(--bg-card)", color: "var(--text-primary)", border: "1px solid var(--border)",
+              borderRadius: 8, padding: "7px 12px", fontFamily: "Georgia, serif", fontSize: 13, width: 180, outline: "none",
             }}
             onFocus={e => (e.target.style.borderColor = "var(--accent)")}
             onBlur={e => (e.target.style.borderColor = "var(--border)")}
           />
-          {search.trim() && (
-            <button
-              type="button"
-              onClick={() => { setSearch(""); setSelectedSlug(null); searchRef.current?.focus(); }}
-              style={{
-                background: "var(--bg-card)", color: "var(--text-muted)",
-                border: "1px solid var(--border)", borderRadius: 8,
-                padding: "9px 14px", fontFamily: "Georgia, serif", fontSize: 13, cursor: "pointer",
-              }}
-            >
-              ✕ Clear
-            </button>
-          )}
           <button
             type="submit"
+            disabled={!addQuery.trim()}
             style={{
-              background: "var(--accent)", color: "#0d1117",
-              border: "none", borderRadius: 8,
-              padding: "9px 20px", fontFamily: "Georgia, serif", fontSize: 14,
-              fontWeight: "bold", cursor: "pointer", flexShrink: 0,
-              opacity: search.trim() ? 1 : 0.5,
+              background: addQuery.trim() ? "var(--accent)" : "var(--bg-card)",
+              color: addQuery.trim() ? "#0d1117" : "var(--text-muted)",
+              border: "1px solid var(--border)", borderRadius: 8,
+              padding: "7px 16px", fontFamily: "Georgia, serif", fontSize: 13,
+              fontWeight: "bold", cursor: addQuery.trim() ? "pointer" : "default", flexShrink: 0,
             }}
           >
-            Search →
+            Explore →
           </button>
         </form>
 
-        {/* Search hint: shows what will happen on submit */}
-        {search.trim() && filteredTopics.length === 0 && (
-          <div style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 8 }}>
-            No studied topics match — pressing Search will open "{search.trim()}" as a new topic.
-          </div>
-        )}
-        {search.trim() && filteredTopics.length > 0 && (
-          <div style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 8 }}>
-            {filteredTopics.length} topic{filteredTopics.length !== 1 ? "s" : ""} match · press Search to explore "{search.trim()}" as a new topic
-          </div>
-        )}
+        <a href="/browse" style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif", fontSize: 13, textDecoration: "none", border: "1px solid var(--border)", borderRadius: 6, padding: "6px 12px", flexShrink: 0 }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--accent)"; (e.currentTarget as HTMLElement).style.color = "var(--accent)"; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--border)"; (e.currentTarget as HTMLElement).style.color = "var(--text-muted)"; }}
+        >
+          ◈ Browse Themes
+        </a>
       </header>
 
-      {/* Empty state */}
+      {/* ── Empty state ────────────────────────────────────────────────── */}
       {topics.length === 0 && (
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: 40 }}>
           <div style={{ fontSize: 48 }}>🗺️</div>
-          <h2 style={{ fontFamily: "Georgia, serif", color: "var(--accent)", fontSize: 22 }}>Your learning map is empty</h2>
-          <p style={{ color: "var(--text-secondary)", textAlign: "center", maxWidth: 420, lineHeight: 1.7 }}>
-            Every topic you study will appear here. Start by searching for a topic above, or go to the homepage to explore one.
+          <h2 style={{ fontFamily: "Georgia, serif", color: "var(--accent)", fontSize: 22, margin: 0 }}>No topics studied yet</h2>
+          <p style={{ color: "var(--text-secondary)", textAlign: "center", maxWidth: 400, lineHeight: 1.7, margin: 0 }}>
+            Enter any academic topic to generate its concept map and reading list. Everything will appear here.
           </p>
-          <a href="/" style={{ color: "var(--accent)", fontFamily: "Georgia, serif", border: "1px solid var(--accent-dim)", borderRadius: 8, padding: "10px 24px", textDecoration: "none" }}>
-            ◈ Explore a Topic →
-          </a>
+          <form onSubmit={addTopic} style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <input
+              value={addQuery}
+              onChange={e => setAddQuery(e.target.value)}
+              placeholder="e.g. Game Theory, Quantum Mechanics…"
+              style={{
+                background: "var(--bg-card)", color: "var(--text-primary)", border: "1px solid var(--border)",
+                borderRadius: 8, padding: "10px 16px", fontFamily: "Georgia, serif", fontSize: 14, width: 280, outline: "none",
+              }}
+              onFocus={e => (e.target.style.borderColor = "var(--accent)")}
+              onBlur={e => (e.target.style.borderColor = "var(--border)")}
+              autoFocus
+            />
+            <button type="submit" disabled={!addQuery.trim()} style={{ background: "var(--accent)", color: "#0d1117", border: "none", borderRadius: 8, padding: "10px 20px", fontFamily: "Georgia, serif", fontSize: 14, fontWeight: "bold", cursor: "pointer" }}>
+              Explore →
+            </button>
+          </form>
         </div>
       )}
 
-      {/* Graph view */}
-      {topics.length > 0 && view === "graph" && (
-        <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-          <div style={{ flex: 1, position: "relative" }}>
-            {filteredTopics.length === 0 ? (
-              <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10 }}>
-                <div style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif", fontSize: 15 }}>No topics match your search.</div>
-                <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Press Search to open it as a new topic.</div>
-              </div>
-            ) : (
-              <MapGraph topics={topicNodes} edges={filteredEdges} onSelect={handleSelect} />
-            )}
-          </div>
-          {selectedTopic && (
-            <DetailPanel topic={selectedTopic} onClose={() => setSelectedSlug(null)} onNavigate={navigateToTopic} />
-          )}
-        </div>
-      )}
+      {/* ── Main split view ────────────────────────────────────────────── */}
+      {topic && (
+        <div style={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}>
 
-      {/* Timeline view */}
-      {topics.length > 0 && view === "timeline" && (
-        <div style={{ flex: 1, overflowY: "auto", padding: "32px 40px", display: "flex", gap: 24 }}>
-          <div style={{ flex: 1, maxWidth: 640 }}>
-            {filteredTopics.length === 0 ? (
-              <div style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif", fontSize: 15, textAlign: "center", paddingTop: 40 }}>
-                No topics match your search.
-              </div>
-            ) : (
-              <div style={{ borderLeft: "2px solid var(--border)", paddingLeft: 24, display: "flex", flexDirection: "column", gap: 24 }}>
-                {filteredTopics.map((t, i) => {
-                  const f = t.concepts.filter(c => c.difficulty === "FOUNDATIONAL").length;
-                  const m = t.concepts.filter(c => c.difficulty === "INTERMEDIATE").length;
-                  const a = t.concepts.filter(c => c.difficulty === "ADVANCED").length;
-                  const isSelected = selectedSlug === t.slug;
-                  return (
-                    <div key={t.slug} style={{ position: "relative" }}>
-                      <div style={{
-                        position: "absolute", left: -32, top: 14,
-                        width: 12, height: 12, borderRadius: "50%",
-                        background: isSelected ? "var(--accent)" : "var(--border)",
-                        border: "2px solid var(--bg-primary)", transition: "background 0.15s",
-                      }} />
-                      {t.firstSeen && (
-                        <div style={{ color: "var(--text-muted)", fontSize: 11, marginBottom: 6 }}>
-                          {new Date(t.firstSeen).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
-                          {i === 0 && <span style={{ color: "var(--accent)", marginLeft: 8 }}>Most Recent</span>}
-                        </div>
-                      )}
-                      <div
-                        onClick={() => setSelectedSlug(isSelected ? null : t.slug)}
-                        style={{
-                          background: isSelected ? "#222940" : "var(--bg-card)",
-                          border: `1px solid ${isSelected ? "var(--accent)" : "var(--border)"}`,
-                          borderRadius: 10, padding: "16px 20px", cursor: "pointer",
-                          transition: "background 0.15s, border-color 0.15s",
-                        }}
-                        onMouseEnter={e => { if (!isSelected) (e.currentTarget as HTMLElement).style.borderColor = "var(--accent-dim)"; }}
-                        onMouseLeave={e => { if (!isSelected) (e.currentTarget as HTMLElement).style.borderColor = "var(--border)"; }}
-                      >
-                        <div style={{ color: "var(--accent)", fontFamily: "Georgia, serif", fontSize: 16, fontWeight: "bold", marginBottom: 10 }}>
-                          {t.label}
-                        </div>
-                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 8 }}>
-                          {Array(Math.min(f, 12)).fill(0).map((_, i) => <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: "#4ade80" }} />)}
-                          {Array(Math.min(m, 12)).fill(0).map((_, i) => <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: "#c9a84c" }} />)}
-                          {Array(Math.min(a, 12)).fill(0).map((_, i) => <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: "#f87171" }} />)}
-                        </div>
-                        <div style={{ display: "flex", gap: 16, fontSize: 12, color: "var(--text-muted)" }}>
-                          <span>{t.concepts.length} concepts</span>
-                          {t.workCount > 0 && <span>{t.workCount} works</span>}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          {/* LEFT: Concept graph */}
+          <div style={{ flex: "0 0 55%", display: "flex", flexDirection: "column", borderRight: "1px solid var(--border)", overflow: "hidden" }}>
+            {/* Panel header */}
+            <div style={{ padding: "12px 20px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 12, background: "var(--bg-secondary)", flexShrink: 0 }}>
+              <span style={{ color: "var(--accent)", fontFamily: "Georgia, serif", fontSize: 14, fontWeight: "bold" }}>
+                Concept Map
+              </span>
+              <span style={{ color: "var(--text-muted)", fontSize: 12 }}>
+                {topic.concepts.length} concepts
+              </span>
 
-          {selectedTopic && (
-            <div style={{ width: 320, flexShrink: 0, position: "sticky", top: 0, alignSelf: "flex-start" }}>
-              <DetailPanel topic={selectedTopic} onClose={() => setSelectedSlug(null)} onNavigate={navigateToTopic} />
+              {/* Difficulty filter */}
+              <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+                {(["ALL", "FOUNDATIONAL", "INTERMEDIATE", "ADVANCED"] as const).map(d => (
+                  <button
+                    key={d}
+                    onClick={() => setDiffFilter(d)}
+                    style={{
+                      background: diffFilter === d ? (d === "FOUNDATIONAL" ? "#4ade80" : d === "INTERMEDIATE" ? "#c9a84c" : d === "ADVANCED" ? "#f87171" : "var(--accent)") : "var(--bg-card)",
+                      color: diffFilter === d ? "#0d1117" : "var(--text-muted)",
+                      border: "1px solid var(--border)", borderRadius: 6,
+                      padding: "3px 10px", fontSize: 11, cursor: "pointer",
+                      fontFamily: "Georgia, serif",
+                    }}
+                  >
+                    {d === "ALL" ? "All" : d === "FOUNDATIONAL" ? "Found." : d === "INTERMEDIATE" ? "Inter." : "Adv."}
+                  </button>
+                ))}
+              </div>
             </div>
-          )}
+
+            {/* Graph or placeholder */}
+            <div style={{ flex: 1, position: "relative" }}>
+              {topic.concepts.length === 0 ? (
+                <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: 32 }}>
+                  <div style={{ fontSize: 36 }}>◈</div>
+                  <div style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif", fontSize: 14, textAlign: "center", lineHeight: 1.7 }}>
+                    No concepts generated yet.
+                  </div>
+                  <a
+                    href={`/topic/${topic.slug}/concepts?label=${encodeURIComponent(topic.label)}`}
+                    style={{ color: "var(--accent)", fontFamily: "Georgia, serif", fontSize: 13, border: "1px solid var(--accent-dim)", borderRadius: 8, padding: "8px 18px", textDecoration: "none" }}
+                  >
+                    Generate Concept Map →
+                  </a>
+                </div>
+              ) : (
+                <ConceptGraph
+                  concepts={displayedConcepts}
+                  onSelect={c => setSelectedConcept(prev => prev?.id === c.id ? null : c)}
+                />
+              )}
+            </div>
+
+            {/* Selected concept detail */}
+            {selectedConcept && (
+              <div style={{
+                flexShrink: 0, borderTop: "1px solid var(--accent-dim)",
+                background: "#222940", padding: "14px 20px", maxHeight: 200, overflowY: "auto",
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div>
+                    <div style={{ color: "var(--accent)", fontFamily: "Georgia, serif", fontSize: 14, fontWeight: "bold" }}>{selectedConcept.name}</div>
+                    <div style={{ color: "var(--text-muted)", fontSize: 11, marginBottom: 6 }}>{selectedConcept.difficulty} · {selectedConcept.category}</div>
+                  </div>
+                  <button onClick={() => setSelectedConcept(null)} style={{ color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer", fontSize: 18 }}>×</button>
+                </div>
+                <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.65, margin: 0 }}>{selectedConcept.description}</p>
+                {selectedConcept.key_works && selectedConcept.key_works.length > 0 && (
+                  <div style={{ color: "var(--text-muted)", fontSize: 11, marginTop: 8 }}>📚 {selectedConcept.key_works.join(" · ")}</div>
+                )}
+                <a
+                  href={`/topic/${topic.slug}/concepts?label=${encodeURIComponent(topic.label)}`}
+                  style={{ display: "inline-block", marginTop: 10, fontSize: 12, color: "var(--accent)", textDecoration: "none", border: "1px solid var(--accent-dim)", borderRadius: 6, padding: "4px 10px" }}
+                >
+                  Deep dive →
+                </a>
+              </div>
+            )}
+          </div>
+
+          {/* RIGHT: Reading order */}
+          <div style={{ flex: "0 0 45%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            {/* Panel header */}
+            <div style={{ padding: "12px 20px", borderBottom: "1px solid var(--border)", background: "var(--bg-secondary)", flexShrink: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ color: "var(--accent)", fontFamily: "Georgia, serif", fontSize: 14, fontWeight: "bold" }}>
+                  Reading Order — Zero to Mastery
+                </span>
+                <span style={{ color: "var(--text-muted)", fontSize: 12 }}>
+                  {essentialWorks.length} works
+                </span>
+              </div>
+
+              {/* Timeline summary */}
+              {essentialWorks.length > 0 && (
+                <div style={{ display: "flex", gap: 12, marginTop: 8, flexWrap: "wrap" }}>
+                  {workGroups.map(g => {
+                    const t = phaseTime(topic.works, g.diff);
+                    const count = essentialWorks.filter(w => w.difficulty === g.diff).length;
+                    if (!t || count === 0) return null;
+                    return (
+                      <div key={g.diff} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <div style={{ width: 8, height: 8, borderRadius: "50%", background: g.color }} />
+                        <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{g.label.split("—")[1].trim()}: <span style={{ color: g.color }}>{t}</span></span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Works list */}
+            <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
+              {essentialWorks.length === 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, paddingTop: 40 }}>
+                  <div style={{ fontSize: 32 }}>📚</div>
+                  <div style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif", fontSize: 14, textAlign: "center", lineHeight: 1.7 }}>
+                    No works generated yet.
+                  </div>
+                  <a
+                    href={`/topic/${topic.slug}/works?label=${encodeURIComponent(topic.label)}`}
+                    style={{ color: "var(--accent)", fontFamily: "Georgia, serif", fontSize: 13, border: "1px solid var(--accent-dim)", borderRadius: 8, padding: "8px 18px", textDecoration: "none" }}
+                  >
+                    Generate Works List →
+                  </a>
+                </div>
+              ) : (
+                <>
+                  {workGroups.map(g => {
+                    const group = essentialWorks.filter(w => w.difficulty === g.diff);
+                    if (group.length === 0) return null;
+                    const startIdx = essentialWorks.filter(w => (DIFF_ORDER[w.difficulty ?? ""] ?? 0) < (DIFF_ORDER[g.diff] ?? 0)).length;
+                    return (
+                      <div key={g.diff} style={{ marginBottom: 24 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                          <div style={{ height: 1, flex: 1, background: g.color + "40" }} />
+                          <span style={{ color: g.color, fontSize: 11, fontWeight: "bold", letterSpacing: 1.2, whiteSpace: "nowrap" }}>
+                            {g.label.toUpperCase()} · {phaseTime(topic.works, g.diff)}
+                          </span>
+                          <div style={{ height: 1, flex: 1, background: g.color + "40" }} />
+                        </div>
+                        {group.map((w, i) => (
+                          <WorkCard key={w.id ?? w.title} work={w} index={startIdx + i + 1} />
+                        ))}
+                      </div>
+                    );
+                  })}
+
+                  {antiWorks.length > 0 && (
+                    <div style={{ marginTop: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                        <div style={{ height: 1, flex: 1, background: "var(--border)" }} />
+                        <span style={{ color: "var(--text-muted)", fontSize: 11, fontWeight: "bold", letterSpacing: 1.2, whiteSpace: "nowrap" }}>
+                          AVOID FOR NOW
+                        </span>
+                        <div style={{ height: 1, flex: 1, background: "var(--border)" }} />
+                      </div>
+                      {antiWorks.map(w => (
+                        <div key={w.title} style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 8, padding: "10px 14px", marginBottom: 8, opacity: 0.7 }}>
+                          <div style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif", fontSize: 13, fontWeight: "bold" }}>🚫 {w.title}</div>
+                          {(w as unknown as { reason?: string }).reason && (
+                            <div style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 4, lineHeight: 1.5 }}>
+                              {(w as unknown as { reason?: string }).reason}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
         </div>
       )}
-    </main>
+    </div>
+  );
+}
+
+export default function MapPage() {
+  return (
+    <Suspense fallback={<div style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ color: "var(--text-muted)", fontFamily: "Georgia, serif" }}>Loading…</span></div>}>
+      <MapPageInner />
+    </Suspense>
   );
 }
