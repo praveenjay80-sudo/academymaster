@@ -10,7 +10,7 @@ export async function POST(req: Request) {
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        await streamToController(learningFlowPrompt(topic), controller, BEGINNER_SYSTEM, 20000);
+        await streamToController(learningFlowPrompt(topic), controller, BEGINNER_SYSTEM, 28000);
       } catch (err) {
         controller.error(err);
       }

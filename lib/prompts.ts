@@ -18,12 +18,12 @@ STAGE ID FORMAT:
 Output each stage as ONE JSON object per line (NDJSON):
 
 Sequential stage:
-{"stage":"1","level":"FOUNDATIONS","layout":"sequential","parallel_group":null,"track":null,"track_position":null,"concepts":[{"name":"Concept Name","description":"One precise plain-English sentence."}],"work":{"title":"Full Title","authors":["Author Name"],"category":"PEDAGOGICAL","reading_time":"2-3 weeks","why":"Why this work is the right one for this stage."},"duration":"2-3 weeks","milestone":"What you can do after this stage."}
+{"stage":"1","level":"FOUNDATIONS","layout":"sequential","parallel_group":null,"track":null,"track_position":null,"prerequisites":["No prerequisites — this is the starting point"],"concepts":[{"name":"Concept Name","description":"3-5 sentences: what this concept IS in plain English (define it clearly for a beginner), WHY it matters and what would be impossible without it, and ONE concrete everyday analogy or example."}],"work":{"title":"Full Title","authors":["Author Name"],"category":"PEDAGOGICAL","reading_time":"2-3 weeks","why":"Why this work is the right one for this stage."},"duration":"2-3 weeks","milestone":"What you can do after this stage."}
 
 Parallel stage within a specialization track (multiple stages per track, all stages in the group share parallel_group):
-{"stage":"spec-a-1","level":"SPECIALIZATION","layout":"parallel","parallel_group":"spec","track":"Algebraic Number Theory","track_position":1,"concepts":[{"name":"...","description":"..."}],"work":{"title":"...","authors":["..."],"category":"SEMINAL","reading_time":"3-4 months","why":"..."},"duration":"3-4 months","milestone":"..."}
-{"stage":"spec-a-2","level":"SPECIALIZATION","layout":"parallel","parallel_group":"spec","track":"Algebraic Number Theory","track_position":2,"concepts":[{"name":"...","description":"..."}],"work":null,"duration":"2-3 months","milestone":"..."}
-{"stage":"spec-b-1","level":"SPECIALIZATION","layout":"parallel","parallel_group":"spec","track":"Analytic Number Theory","track_position":1,"concepts":[{"name":"...","description":"..."}],"work":{"title":"...","authors":["..."],"category":"PEDAGOGICAL","reading_time":"2-3 months","why":"..."},"duration":"2-3 months","milestone":"..."}
+{"stage":"spec-a-1","level":"SPECIALIZATION","layout":"parallel","parallel_group":"spec","track":"Algebraic Number Theory","track_position":1,"prerequisites":["All FOUNDATIONS stages","Completion of INTERMEDIATE stages","Abstract Algebra fundamentals"],"concepts":[{"name":"...","description":"3-5 sentences explaining the concept fully."}],"work":{"title":"...","authors":["..."],"category":"SEMINAL","reading_time":"3-4 months","why":"..."},"duration":"3-4 months","milestone":"..."}
+{"stage":"spec-a-2","level":"SPECIALIZATION","layout":"parallel","parallel_group":"spec","track":"Algebraic Number Theory","track_position":2,"prerequisites":["spec-a-1: Dedekind domains and ring of integers"],"concepts":[{"name":"...","description":"..."}],"work":null,"duration":"2-3 months","milestone":"..."}
+{"stage":"spec-b-1","level":"SPECIALIZATION","layout":"parallel","parallel_group":"spec","track":"Analytic Number Theory","track_position":1,"prerequisites":["All FOUNDATIONS and INTERMEDIATE stages","Complex Analysis fundamentals"],"concepts":[{"name":"...","description":"..."}],"work":{"title":"...","authors":["..."],"category":"PEDAGOGICAL","reading_time":"2-3 months","why":"..."},"duration":"2-3 months","milestone":"..."}
 
 category must be exactly one of:
 - PEDAGOGICAL — written to teach, clearest path to understanding
@@ -35,6 +35,8 @@ Rules:
 - SPECIALIZATION tracks must reflect how experts in this field ACTUALLY specialize — use real named tracks (e.g. for Mathematics: Algebra, Analysis, Topology, Number Theory, Geometry; for Physics: Quantum Field Theory, General Relativity, Statistical Mechanics, Condensed Matter; for CS: Systems, Theory, ML, PL)
 - Each specialization track should have 2-5 sequential stages that deepen mastery of THAT track
 - All stages in a parallel group share the same parallel_group value; stages in the same track share the same track name
+- prerequisites: array of 1-4 short strings — what must be known or completed before starting this stage. For stage 1: ["No prerequisites"]. For later sequential stages: reference the key concepts from the previous stage. For parallel tracks: reference which levels/stages must be done first.
+- concepts: each concept description must be 3-5 rich sentences: (1) what the concept IS in plain English, (2) why it matters / what problem it solves, (3) a concrete analogy or worked example that makes it tangible. No jargon without explanation.
 - Each stage: 2-5 concepts + at most one primary work (work may be null for concept-only stages)
 - reading_time must be concrete: "1-2 weeks", "2-3 months", "5-6 months"
 - RESEARCH level: name specific open problems, active subfields, or frontier methods

@@ -26,6 +26,7 @@ interface LearningStage {
   parallel_group: string | null;
   track?: string | null;
   track_position?: number | null;
+  prerequisites?: string[];
   concepts: StageConcept[];
   work: StageWork | null;
   duration: string;
@@ -193,6 +194,21 @@ function StageCard({
         </div>
       </div>
 
+      {/* Prerequisites */}
+      {stage.prerequisites && stage.prerequisites.length > 0 && (
+        <div style={{ padding: "8px 14px", borderBottom: "1px solid var(--border-subtle)", background: "rgba(0,0,0,0.18)" }}>
+          <div style={{ fontSize: 9, color: "var(--text-muted)", fontWeight: "bold", letterSpacing: 1, marginBottom: 5 }}>PREREQUISITES</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {stage.prerequisites.map((prereq, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
+                <span style={{ color: accentColor, fontSize: 10, lineHeight: 1.5, flexShrink: 0 }}>→</span>
+                <span style={{ color: "var(--text-secondary)", fontSize: 11, lineHeight: 1.5 }}>{prereq}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Concepts */}
       <div style={{ padding: "9px 14px", borderBottom: "1px solid var(--border-subtle)" }}>
         <button
@@ -216,11 +232,11 @@ function StageCard({
           </div>
         </button>
         {conceptsOpen && (
-          <div style={{ marginTop: 9, display: "flex", flexDirection: "column", gap: 7 }}>
+          <div style={{ marginTop: 9, display: "flex", flexDirection: "column", gap: 12 }}>
             {stage.concepts.map(c => (
-              <div key={c.name}>
-                <div style={{ color: "var(--text-primary)", fontSize: 11, fontWeight: "bold", fontFamily: "Georgia, serif", marginBottom: 2 }}>{c.name}</div>
-                <div style={{ color: "var(--text-secondary)", fontSize: 11, lineHeight: 1.6 }}>{c.description}</div>
+              <div key={c.name} style={{ paddingBottom: 10, borderBottom: "1px solid var(--border-subtle)" }}>
+                <div style={{ color: accentColor, fontSize: 12, fontWeight: "bold", fontFamily: "Georgia, serif", marginBottom: 5 }}>{c.name}</div>
+                <div style={{ color: "var(--text-secondary)", fontSize: 12, lineHeight: 1.7 }}>{c.description}</div>
               </div>
             ))}
           </div>
@@ -420,7 +436,7 @@ function MapInner() {
   const [status, setStatus] = useState<Status>("idle");
   const [gen, setGen] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
-  const cacheKey = `learning-flow-v2:${slug}`;
+  const cacheKey = `learning-flow-v3:${slug}`;
   const TTL = 14 * 24 * 60 * 60 * 1000;
 
   useEffect(() => {
