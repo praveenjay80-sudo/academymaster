@@ -1,3 +1,35 @@
+export function learningFlowPrompt(topic: string) {
+  return `Generate a complete learning flow for "${topic}" as a series of linked learning stages — each stage bundles the concepts to master AND the key work to read at that moment, ordered from zero knowledge to mastery.
+
+LAYOUT RULES:
+- sequential: this stage MUST follow the previous one because the concepts are direct prerequisites
+- parallel: this stage can be studied SIMULTANEOUSLY with the adjacent stage — they are independent tracks
+
+Output each stage as ONE JSON object per line (NDJSON):
+
+Sequential stage:
+{"stage":"1","layout":"sequential","parallel_group":null,"concepts":[{"name":"Concept Name","description":"One precise plain-English sentence."}],"work":{"title":"Full Title","authors":["Author Name"],"category":"PEDAGOGICAL","reading_time":"3-4 weeks","why":"Why this work is the right one for this stage."},"duration":"3-4 weeks","milestone":"What you can understand or do after finishing this stage."}
+
+Parallel stages (same parallel_group string):
+{"stage":"3a","layout":"parallel","parallel_group":"3","concepts":[{"name":"...","description":"..."}],"work":{"title":"...","authors":["..."],"category":"SEMINAL","reading_time":"3-4 months","why":"..."},"duration":"3-4 months","milestone":"..."}
+{"stage":"3b","layout":"parallel","parallel_group":"3","concepts":[{"name":"...","description":"..."}],"work":null,"duration":"2-3 months","milestone":"..."}
+
+category must be exactly one of:
+- PEDAGOGICAL — written to teach, clearest path to understanding
+- SEMINAL — the original founding work of this area
+- BREAKTHROUGH — paradigm-shifting, changed how the field thinks
+
+Rules:
+- First 2-3 stages are always sequential (foundation must be laid in order)
+- Use parallel only when the field genuinely splits into independent tracks that don't depend on each other
+- Each stage: 2-5 concepts + at most one primary work (work may be null for concept-only stages)
+- Generate 8-14 stages total covering zero to mastery
+- reading_time must be concrete: "1-2 weeks", "2-3 months", "5-6 months"
+- No markdown, no array brackets, no commas between objects, output nothing but NDJSON
+
+Topic: ${topic}`;
+}
+
 export function mapWorksPrompt(topic: string) {
   return `Generate the complete reading list for mastering "${topic}" from absolute zero to the research frontier.
 
